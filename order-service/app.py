@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import asyncpg
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "order-service")
@@ -73,9 +74,19 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Order Service",
-    version="3.0.0",
+    version="4.0.0",
     description="Order microservice owning order data in PostgreSQL and calling Catalog via REST.",
     lifespan=lifespan,
+)
+
+# Case 2 exposes this service through its own ngrok endpoint, so the browser
+# frontend is a different origin. This open CORS policy is intentional for the
+# seminar/demo environment; production should restrict allowed origins.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -137,7 +148,7 @@ async def health():
 async def info():
     return {
         "service": SERVICE_NAME,
-        "version": "3.0.0",
+        "version": "4.0.0",
         "runtime": "Python / FastAPI + HTTPX + asyncpg",
         "container_port": 8003,
         "persistence": "PostgreSQL named volume",
