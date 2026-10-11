@@ -6,7 +6,7 @@ Chạy tại thư mục gốc repo. Trước khi chạy, điền token vào `.en
 NGROK_AUTHTOKEN=your_real_token
 ```
 
-# CASE 1 — BFF public, native backend private
+# CASE 1 — Nginx public, native backend private
 
 Start:
 
@@ -16,7 +16,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Lấy URL FE/BFF:
+Lấy URL Frontend/Nginx:
 
 ```powershell
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
@@ -44,10 +44,10 @@ localhost:8002            ❌
 localhost:8003            ❌
 ```
 
-BFF gọi backend nội bộ:
+Nginx container gọi backend nội bộ qua `service-net`:
 
 ```powershell
-docker compose exec frontend-bff node -e "fetch('http://catalog-service:8002/products').then(r=>r.text()).then(console.log)"
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
 
 Network boundary:
@@ -178,7 +178,7 @@ docker compose -f compose.public.yaml down
 
 ```text
 CASE 1
-Internet -> ngrok -> BFF -> native backend private
+Internet -> ngrok -> Frontend/Nginx -> selected /shop routes -> backend private
 
 CASE 2
 Internet -> FE tunnel      -> Frontend
@@ -186,4 +186,4 @@ Internet -> Order tunnel   -> Order API
 Internet -> Catalog tunnel -> Catalog API
 ```
 
-Case 2 không dùng shared Gateway. Ba public URL riêng nhưng chỉ dùng **một ngrok agent session**.
+Case 1 dùng Nginx reverse proxy cho các route frontend cần. Case 2 không reverse proxy business API qua frontend; Order và Catalog có public URL riêng.
