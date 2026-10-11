@@ -63,7 +63,7 @@ docker compose down
 
 ---
 
-# CASE 2 — ba public ngrok endpoint độc lập
+# CASE 2 — ba public URL độc lập, một ngrok agent
 
 Start:
 
@@ -73,24 +73,26 @@ docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy 3 URL:
+Kỳ vọng chỉ có một container `ngrok`, nhưng nó chạy ba tunnel từ `ngrok/ngrok.yml`.
+
+Lấy cả 3 URL:
 
 ```powershell
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-frontend:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-order:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-catalog:4040/api/tunnels
+docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
+
+Trong JSON tìm tunnel `frontend`, `order`, `catalog` và lấy từng `public_url`.
 
 Nói:
 
-> Case 2 không dùng một Gateway chung. Frontend, Order và Catalog mỗi service có một public ngrok URL riêng.
+> Case 2 không dùng một Gateway chung. Một ngrok agent mở ba public tunnel độc lập: Frontend, Order và Catalog mỗi service có URL Internet riêng.
 
 Flow:
 
 ```text
-Browser -> ngrok-FE      -> Frontend
-Postman -> ngrok-Order   -> Order API
-Postman -> ngrok-Catalog -> Catalog API
+Browser -> FE tunnel      -> Frontend
+Postman -> Order tunnel   -> Order API
+Postman -> Catalog tunnel -> Catalog API
 ```
 
 Test:
@@ -122,7 +124,7 @@ ngrok-skip-browser-warning: 1
 
 Nói:
 
-> Backend container vẫn không publish host port, nhưng backend API đã public qua ngrok riêng. Đây là khác biệt rõ nhất với Case 1.
+> Backend container vẫn không publish host port, nhưng backend API đã public qua tunnel riêng. Ba tunnel dùng chung một ngrok agent session nên không cần ba agent process.
 
 Internal Order -> Catalog vẫn dùng private network:
 
