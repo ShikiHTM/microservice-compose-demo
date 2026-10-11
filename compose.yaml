@@ -76,23 +76,19 @@ services:
       - order-data-net
     restart: unless-stopped
 
-  frontend-bff:
+  frontend-service:
     build:
       context: ./frontend-service
-      dockerfile: Dockerfile.bff
+      dockerfile: Dockerfile.private
       args:
         VITE_DEPLOYMENT_MODE: private
-    environment:
-      PORT: 3000
-      ORDER_SERVICE_URL: http://order-service:8003
-      CATALOG_SERVICE_URL: http://catalog-service:8002
     depends_on:
       order-service:
         condition: service_healthy
       catalog-service:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/health"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -104,11 +100,11 @@ services:
 
   ngrok:
     image: ngrok/ngrok:latest
-    command: ["http", "frontend-bff:3000"]
+    command: ["http", "frontend-service:80"]
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting private mode}
     depends_on:
-      frontend-bff:
+      frontend-service:
         condition: service_healthy
     networks:
       - edge-net
