@@ -43,7 +43,7 @@ Xong Case 1:
 docker compose down
 ```
 
-## Case 2 — 3 ngrok URL độc lập
+## Case 2 — 3 public URL từ 1 ngrok agent
 
 ```cmd
 docker compose -f compose.public.yaml down -v
@@ -51,23 +51,13 @@ docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy URL Frontend:
+Lấy cả 3 tunnel từ một agent:
 
 ```cmd
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-frontend:4040/api/tunnels
+docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Lấy URL Order:
-
-```cmd
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-order:4040/api/tunnels
-```
-
-Lấy URL Catalog:
-
-```cmd
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-catalog:4040/api/tunnels
-```
+Trong JSON tìm `name` là `frontend`, `order`, `catalog` và lấy từng `public_url`.
 
 Test từng public endpoint riêng:
 
