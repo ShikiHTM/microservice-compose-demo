@@ -6,7 +6,7 @@ Trước khi chạy, đặt token trong `.env`:
 NGROK_AUTHTOKEN=your_real_token
 ```
 
-# CASE 1 — ngrok reverse proxy, backend không có public URL riêng
+# CASE 1 — ngrok tunnel + Nginx reverse proxy
 
 ```powershell
 docker compose down -v --remove-orphans
@@ -20,20 +20,20 @@ Lấy public URL:
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Trong JSON tìm endpoint/tunnel tên `public`. Giả sử:
+Giả sử:
 
 ```powershell
-$base="https://xxxx.ngrok.app"
+$base="https://xxxx.ngrok-free.app"
 ```
 
-Test route do ngrok Traffic Policy reverse proxy:
+Test Nginx reverse proxy:
 
 ```powershell
 curl.exe -H "ngrok-skip-browser-warning: 1" "$base/shop/products"
 curl.exe -H "ngrok-skip-browser-warning: 1" "$base/shop/orders"
 ```
 
-Raw backend API bị chặn ngay tại ngrok edge:
+Raw backend path không được proxy:
 
 ```powershell
 curl.exe -i -H "ngrok-skip-browser-warning: 1" "$base/api/order/orders"
@@ -49,13 +49,13 @@ curl.exe --max-time 3 http://localhost:8002/products
 curl.exe --max-time 3 http://localhost:8003/orders
 ```
 
-Frontend Nginx bây giờ **không nằm trên service-net**, nên thử frontend resolve Catalog phải fail:
+Chứng minh frontend Nginx gọi Catalog nội bộ qua `service-net`:
 
 ```powershell
-docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
 
-Điều đó là đúng kiến trúc: ngrok mới là reverse proxy nằm trên `edge-net` + `service-net`.
+Kỳ vọng thành công.
 
 Network/data boundary:
 
@@ -67,7 +67,7 @@ docker compose exec catalog-service node -e "require('dns').lookup('postgres',(e
 
 Kỳ vọng: Order thấy Catalog; Order không thấy Redis; Catalog không thấy PostgreSQL.
 
-Tạo order trên UI hoặc gọi public selected route:
+Tạo order:
 
 ```text
 POST BASE/shop/checkout
@@ -105,15 +105,7 @@ Lấy cả 3 URL:
 docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Tìm `frontend`, `order`, `catalog` và lấy từng `public_url`:
-
-```text
-FE_URL       = public_url của frontend
-ORDER_URL    = public_url của order
-CATALOG_URL  = public_url của catalog
-```
-
-Test:
+Tìm `frontend`, `order`, `catalog` và lấy từng `public_url`.
 
 ```text
 FE_URL/              -> React frontend
@@ -121,14 +113,14 @@ ORDER_URL/orders     -> native Order API
 CATALOG_URL/products -> native Catalog API
 ```
 
-Không có host-port bypass:
+Host ports vẫn đóng:
 
 ```powershell
 curl.exe --max-time 3 http://localhost:8002/products
 curl.exe --max-time 3 http://localhost:8003/orders
 ```
 
-Create order trực tiếp qua native public Order API:
+Create order trực tiếp:
 
 ```text
 POST ORDER_URL/orders
@@ -145,39 +137,11 @@ ngrok-skip-browser-warning: 1
 }
 ```
 
-Internal Order -> Catalog vẫn dùng Docker network:
-
-```powershell
-docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
-```
-
-Datastore boundary:
-
-```powershell
-docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
-docker compose -f compose.public.yaml exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
-```
-
-Business data:
-
-```powershell
-docker compose -f compose.public.yaml exec postgres psql -U shopuser -d shopdb -c "SELECT customer_name, product_name, quantity, total FROM orders ORDER BY created_at DESC;"
-docker compose -f compose.public.yaml exec redis redis-cli HGETALL product:1
-```
-
-Cleanup:
-
-```powershell
-docker compose -f compose.public.yaml down
-```
-
 # Câu chốt
 
 ```text
 CASE 1
-one public ngrok URL + Traffic Policy reverse proxy
-selected /shop/* -> private internal endpoints
-/api/* -> 404
+Internet -> ngrok -> Nginx reverse proxy -> private backend
 
 CASE 2
 FE_URL       -> FE
