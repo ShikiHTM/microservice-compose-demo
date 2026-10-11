@@ -31,83 +31,65 @@ Order gọi Catalog bằng REST. Order không đọc Redis trực tiếp; Catalo
           postgres                  redis
 ```
 
-| Component | service-net | order-data-net | catalog-data-net |
-|---|:---:|:---:|:---:|
-| Order | ✅ | ✅ | ❌ |
-| Catalog | ✅ | ❌ | ✅ |
-| PostgreSQL | ❌ | ✅ | ❌ |
-| Redis | ❌ | ❌ | ✅ |
-
 ---
 
-# Case 1 — ngrok làm reverse proxy, backend native không public riêng
+# Case 1 — Nginx reverse proxy, native backend private
 
 Deployment: `compose.yaml`.
 
 ```text
-                              INTERNET
-                                 |
-                              HTTPS
-                                 |
-                                 v
-                    +--------------------------+
-                    | ngrok public endpoint    |
-                    | Traffic Policy / routing |
-                    +------------+-------------+
-                                 |
-               +-----------------+------------------+
-               |                 |                  |
-               v                 v                  v
-          / -> frontend      /shop/order      /shop/catalog
-               |                 |                  |
-          edge-net          forward-internal   forward-internal
-                                 |                  |
-                                 v                  v
-                         order-service -----> catalog-service
-                              |                    |
-                       order-data-net       catalog-data-net
-                              |                    |
-                          PostgreSQL              Redis
+                         INTERNET
+                            |
+                         HTTPS
+                            |
+                            v
+                         ngrok
+                            |
+                         edge-net
+                            |
+                            v
+                +-----------------------+
+                | Frontend + Nginx      |
+                | selected reverse proxy|
+                +-----------+-----------+
+                            |
+                       service-net
+                    /               \
+                   v                 v
+            order-service -----> catalog-service
+                 |                    |
+          order-data-net       catalog-data-net
+                 |                    |
+             PostgreSQL              Redis
 ```
 
-Case 1 không dùng BFF. Nginx chỉ serve React static files và **không reverse proxy backend**.
-
-`ngrok/ngrok.private.yml` dùng agent config v3 với ba endpoint:
+Ngrok chỉ tunnel vào `frontend-service:80`. Nginx serve React và reverse proxy **chỉ các route được chọn**:
 
 ```text
-public              random HTTPS public endpoint
-order.internal      internal endpoint -> order-service:8003
-catalog.internal    internal endpoint -> catalog-service:8002
+GET  /shop/products  -> catalog-service:8002/products
+GET  /shop/orders    -> order-service:8003/orders
+POST /shop/checkout  -> order-service:8003/orders
 ```
 
-`.internal` được ngrok hiểu là internal binding, vì vậy Order/Catalog không có public URL riêng.
-
-Public endpoint dùng Traffic Policy để route có chọn lọc:
+Các route `/shop/system/...` cũng được proxy riêng cho UI. Không có generic `/api/*` proxy:
 
 ```text
-/                          -> frontend-service:80 (public endpoint upstream)
-/shop/products             -> rewrite /products -> catalog.internal
-/shop/orders               -> rewrite /orders   -> order.internal
-/shop/checkout             -> rewrite /orders   -> order.internal
-/shop/system/order/*       -> rewrite prefix    -> order.internal
-/shop/system/catalog/*     -> rewrite prefix    -> catalog.internal
-/api/*                     -> custom 404 at ngrok edge
+/api/order/*    -> 404
+/api/catalog/*  -> 404
 ```
-
-`url-rewrite` giữ public URL mà client nhìn thấy, còn `forward-internal` chuyển request tới internal endpoint.
 
 ### Network membership Case 1
 
 | Component | edge-net | service-net |
 |---|:---:|:---:|
-| frontend-service | ✅ | ❌ |
-| ngrok | ✅ | ✅ |
+| frontend-service | ✅ | ✅ |
+| ngrok | ✅ | ❌ |
 | order-service | ❌ | ✅ |
 | catalog-service | ❌ | ✅ |
 
-Điểm này rất quan trọng: **frontend Nginx không còn route tới backend**. Chính ngrok agent là thành phần nối public edge với private `service-net`.
+Điểm quan trọng: Nginx là thành phần reverse proxy nối public entry point với backend private qua `service-net`. Order/Catalog không có public URL riêng và không publish host port.
 
-External client vẫn gọi được selected public routes như `/shop/checkout`; Case 1 bảo vệ native interface/public endpoint riêng của microservice, không phân biệt browser và Postman.
+Ngrok có Traffic Policy/Gateway cho routing nâng cao, nhưng policy cần cho demo này bị giới hạn bởi plan hiện tại; vì vậy demo dùng Nginx để reverse proxy.
 
 ---
 
@@ -161,42 +143,22 @@ order-service -> service-net -> catalog-service:8002
 | | Case 1 | Case 2 |
 |---|---|---|
 | Frontend public | ✅ | ✅ |
-| Reverse proxy business routing | ngrok Traffic Policy | Không shared reverse proxy |
+| Reverse proxy business routing | Nginx | Không shared reverse proxy |
 | Order có public URL riêng | ❌ | ✅ |
 | Catalog có public URL riêng | ❌ | ✅ |
-| `/api/*` qua FE/public entry | ❌ 404 | Không dùng shared path |
 | Host publish 8002/8003 | ❌ | ❌ |
 | Database public | ❌ | ❌ |
 | Order -> Catalog nội bộ | ✅ | ✅ |
 
 ```text
 CASE 1
-one public URL
-  /                -> FE
-  selected /shop/* -> private internal endpoints
+one public URL -> ngrok -> Nginx -> selected /shop/* -> private backend
 
 CASE 2
 FE_URL       -> FE
 ORDER_URL    -> Order
 CATALOG_URL  -> Catalog
 ```
-
----
-
-# Ngrok concepts dùng trong bài
-
-Case 1 dùng **Agent Config v3**, **Traffic Policy**, **URL Rewrite**, **Forward Internal**, **Internal Endpoints** và một random public HTTPS endpoint.
-
-Case 2 dùng một ngrok agent chạy nhiều tunnel trong cùng session.
-
-Không case nào cần publish host port `8002/8003`.
-
-# Persistence
-
-- PostgreSQL -> named volume `order-data`.
-- Redis -> AOF + named volume `catalog-data`.
-- `docker compose down` giữ volumes.
-- `docker compose down -v` xóa volumes.
 
 # Boundary proof
 
@@ -210,6 +172,6 @@ docker compose exec order-service python -c "import socket; print(socket.gethost
 # Catalog không thấy PostgreSQL
 docker compose exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
 
-# Frontend Case 1 không còn ở service-net, nên không thấy Catalog
-docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
+# Frontend Nginx Case 1 thấy Catalog qua service-net
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
