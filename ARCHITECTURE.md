@@ -1,6 +1,6 @@
 # Architecture — 2 Microservices, 2 Exposure Models
 
-Project có hai business microservices: **Order** và **Catalog**. Mục tiêu là tách rõ service ownership, Docker network boundary và public exposure boundary.
+Project có hai business microservices: **Order** và **Catalog**.
 
 ## Business ownership
 
@@ -40,62 +40,80 @@ Order gọi Catalog bằng REST. Order không đọc Redis trực tiếp; Catalo
 
 ---
 
-# Case 1 — Nginx public, native backend private
+# Case 1 — ngrok làm reverse proxy, backend native không public riêng
 
 Deployment: `compose.yaml`.
 
 ```text
-                         INTERNET
-                            |
-                         HTTPS
-                            |
-                            v
-                         ngrok
-                            |
-                         edge-net
-                            |
-                            v
-                +-----------------------+
-                | Frontend + Nginx      |
-                | selected reverse proxy|
-                +-----------+-----------+
-                            |
-                       service-net
-                    /               \
-                   v                 v
-            order-service -----> catalog-service
-                 |                    |
-          order-data-net       catalog-data-net
-                 |                    |
-             PostgreSQL              Redis
+                              INTERNET
+                                 |
+                              HTTPS
+                                 |
+                                 v
+                    +--------------------------+
+                    | ngrok public endpoint    |
+                    | Traffic Policy / routing |
+                    +------------+-------------+
+                                 |
+               +-----------------+------------------+
+               |                 |                  |
+               v                 v                  v
+          / -> frontend      /shop/order      /shop/catalog
+               |                 |                  |
+          edge-net          forward-internal   forward-internal
+                                 |                  |
+                                 v                  v
+                         order-service -----> catalog-service
+                              |                    |
+                       order-data-net       catalog-data-net
+                              |                    |
+                          PostgreSQL              Redis
 ```
 
-Ngrok chỉ có đường tới `frontend-service`. Order/Catalog không có public endpoint riêng và không publish host port.
+Case 1 không dùng BFF. Nginx chỉ serve React static files và **không reverse proxy backend**.
 
-Nginx serve React và reverse proxy **chỉ các route được chọn**:
+`ngrok/ngrok.private.yml` dùng agent config v3 với ba endpoint:
 
 ```text
-GET  /shop/products  -> catalog-service:8002/products
-GET  /shop/orders    -> order-service:8003/orders
-POST /shop/checkout  -> order-service:8003/orders
+public              random HTTPS public endpoint
+order.internal      internal endpoint -> order-service:8003
+catalog.internal    internal endpoint -> catalog-service:8002
 ```
 
-Các route metadata `/shop/system/...` cũng được proxy riêng cho UI. Không có generic `/api/*` proxy:
+`.internal` được ngrok hiểu là internal binding, vì vậy Order/Catalog không có public URL riêng.
+
+Public endpoint dùng Traffic Policy để route có chọn lọc:
 
 ```text
-/api/order/*    -> 404
-/api/catalog/*  -> 404
+/                          -> frontend-service:80 (public endpoint upstream)
+/shop/products             -> rewrite /products -> catalog.internal
+/shop/orders               -> rewrite /orders   -> order.internal
+/shop/checkout             -> rewrite /orders   -> order.internal
+/shop/system/order/*       -> rewrite prefix    -> order.internal
+/shop/system/catalog/*     -> rewrite prefix    -> catalog.internal
+/api/*                     -> custom 404 at ngrok edge
 ```
 
-External client vẫn có thể gọi `/shop/checkout` vì đó là public frontend route. Case 1 bảo vệ **native microservice interface và direct service exposure**, không phải phân biệt browser với Postman.
+`url-rewrite` giữ public URL mà client nhìn thấy, còn `forward-internal` chuyển request tới internal endpoint.
+
+### Network membership Case 1
+
+| Component | edge-net | service-net |
+|---|:---:|:---:|
+| frontend-service | ✅ | ❌ |
+| ngrok | ✅ | ✅ |
+| order-service | ❌ | ✅ |
+| catalog-service | ❌ | ✅ |
+
+Điểm này rất quan trọng: **frontend Nginx không còn route tới backend**. Chính ngrok agent là thành phần nối public edge với private `service-net`.
+
+External client vẫn gọi được selected public routes như `/shop/checkout`; Case 1 bảo vệ native interface/public endpoint riêng của microservice, không phân biệt browser và Postman.
 
 ---
 
 # Case 2 — ba public URL độc lập từ một ngrok agent
 
 Deployment: `compose.public.yaml`.
-
-Case 2 không dùng shared Nginx Gateway. Một ngrok agent mở ba tunnel trong cùng một agent session:
 
 ```text
                          INTERNET
@@ -118,7 +136,7 @@ Case 2 không dùng shared Nginx Gateway. Một ngrok agent mở ba tunnel trong
                        PostgreSQL          Redis
 ```
 
-Tunnel definitions nằm trong `ngrok/ngrok.yml`:
+`ngrok/ngrok.yml` tạo ba tunnel:
 
 ```text
 frontend -> frontend-service:80
@@ -126,80 +144,52 @@ order    -> order-service:8003
 catalog  -> catalog-service:8002
 ```
 
-Mỗi public component có URL riêng:
+Order và Catalog có **public URL riêng**, nên browser/Postman có thể gọi native API trực tiếp.
 
-```text
-https://<frontend>.ngrok-free.app/
-https://<order>.ngrok-free.app/orders
-https://<catalog>.ngrok-free.app/products
-```
+Frontend Nginx Case 2 chỉ serve React và expose `/runtime/tunnels` để React discover backend URL. Business API không reverse proxy qua frontend.
 
-Browser tải React từ frontend tunnel, discover runtime URL của Order/Catalog qua ngrok inspector metadata, rồi gọi trực tiếp hai backend tunnel.
-
-```text
-Browser -> FE public URL      -> frontend-service
-Browser -> Order public URL   -> order-service
-Browser -> Catalog public URL -> catalog-service
-```
-
-Frontend Nginx trong Case 2 **không reverse proxy business API**. Nó chỉ serve React và expose runtime tunnel metadata.
-
-Do các origin khác nhau, Order và Catalog bật CORS cho demo. Đây là browser interoperability, không phải security boundary.
-
-Internal microservice call vẫn giữ private:
+Internal service-to-service vẫn là:
 
 ```text
 order-service -> service-net -> catalog-service:8002
 ```
 
-Order không đi vòng ra Internet/ngrok để reserve stock.
-
 ---
 
 # So sánh exposure boundary
 
-```text
-CASE 1
-Internet -> ngrok -> Frontend/Nginx -> selected /shop routes -> private backend
-
-CASE 2
-Internet -> FE tunnel      -> Frontend
-Internet -> Order tunnel   -> Order API
-Internet -> Catalog tunnel -> Catalog API
-```
-
 | | Case 1 | Case 2 |
 |---|---|---|
 | Frontend public | ✅ | ✅ |
-| Nginx reverse proxy business API | ✅, selected `/shop/*` | ❌ |
+| Reverse proxy business routing | ngrok Traffic Policy | Không shared reverse proxy |
 | Order có public URL riêng | ❌ | ✅ |
 | Catalog có public URL riêng | ❌ | ✅ |
+| `/api/*` qua FE/public entry | ❌ 404 | Không dùng shared path |
 | Host publish 8002/8003 | ❌ | ❌ |
 | Database public | ❌ | ❌ |
 | Order -> Catalog nội bộ | ✅ | ✅ |
-| Ngrok agent sessions cho deployment | 1 | 1 |
 
-Điểm khác biệt chính là **backend có public endpoint riêng hay không**.
+```text
+CASE 1
+one public URL
+  /                -> FE
+  selected /shop/* -> private internal endpoints
+
+CASE 2
+FE_URL       -> FE
+ORDER_URL    -> Order
+CATALOG_URL  -> Catalog
+```
 
 ---
 
-# Ngrok và Docker ports
+# Ngrok concepts dùng trong bài
 
-`EXPOSE` hoặc container port không tự public ra host.
+Case 1 dùng **Agent Config v3**, **Traffic Policy**, **URL Rewrite**, **Forward Internal**, **Internal Endpoints** và một random public HTTPS endpoint.
 
-```text
-8002/tcp
-```
+Case 2 dùng một ngrok agent chạy nhiều tunnel trong cùng session.
 
-trong `docker compose ps` không tương đương:
-
-```text
-0.0.0.0:8002->8002/tcp
-```
-
-Case 2 chứng minh một service vẫn có thể public Internet qua ngrok dù không publish host port.
-
----
+Không case nào cần publish host port `8002/8003`.
 
 # Persistence
 
@@ -207,46 +197,19 @@ Case 2 chứng minh một service vẫn có thể public Internet qua ngrok dù 
 - Redis -> AOF + named volume `catalog-data`.
 - `docker compose down` giữ volumes.
 - `docker compose down -v` xóa volumes.
-- Ngrok URLs có thể thay đổi khi tunnel được tạo lại.
-
-# Dependency graph
-
-```text
-Redis healthy ------> Catalog healthy ----+
-                                          |
-Postgres healthy ------------------------> Order healthy
-                                          |
-Catalog healthy --------------------------+
-```
-
-Case 1:
-
-```text
-Order + Catalog healthy -> Frontend/Nginx healthy -> ngrok starts
-```
-
-Case 2:
-
-```text
-Frontend + Order + Catalog healthy -> one ngrok agent -> 3 tunnels
-```
 
 # Boundary proof
 
-Order thấy Catalog:
-
 ```powershell
-docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
-```
+# Order thấy Catalog
+docker compose exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
 
-Order không thấy Redis:
+# Order không thấy Redis
+docker compose exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
 
-```powershell
-docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
-```
+# Catalog không thấy PostgreSQL
+docker compose exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
 
-Catalog không thấy PostgreSQL:
-
-```powershell
-docker compose -f compose.public.yaml exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
+# Frontend Case 1 không còn ở service-net, nên không thấy Catalog
+docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
 ```
