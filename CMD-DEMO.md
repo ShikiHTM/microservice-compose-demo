@@ -2,40 +2,50 @@
 
 Trước khi chạy, điền `NGROK_AUTHTOKEN` vào `.env`.
 
-## Case 1 — ngrok -> Frontend/Nginx, backend private
+## Case 1 — ngrok Traffic Policy reverse proxy
 
 ```cmd
-docker compose down -v
+docker compose down -v --remove-orphans
 docker compose up -d --build
 docker compose ps
 ```
 
-Lấy URL:
+Lấy public URL:
 
 ```cmd
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Test Nginx reverse proxy:
+Trong JSON tìm endpoint/tunnel `public`.
+
+Test selected route:
 
 ```cmd
-curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/products
-curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/api/order/orders
-curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/api/catalog/products
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/shop/products
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/shop/orders
 ```
 
-Không có host-port bypass:
+Raw backend path bị ngrok chặn:
+
+```cmd
+curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/api/order/orders
+curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/api/catalog/products
+```
+
+Host ports vẫn đóng:
 
 ```cmd
 curl http://localhost:8002/products
 curl http://localhost:8003/orders
 ```
 
-Frontend Nginx gọi Catalog nội bộ:
+Frontend Nginx không còn cùng `service-net` với backend:
 
 ```cmd
-docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
+docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
 ```
+
+Kỳ vọng fail. Ngrok mới là reverse proxy nối `edge-net` với `service-net`.
 
 Xong Case 1:
 
@@ -46,20 +56,20 @@ docker compose down
 ## Case 2 — 3 public URL từ 1 ngrok agent
 
 ```cmd
-docker compose -f compose.public.yaml down -v
+docker compose -f compose.public.yaml down -v --remove-orphans
 docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy cả 3 tunnel từ một agent:
+Lấy cả 3 tunnel:
 
 ```cmd
 docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Trong JSON tìm `name` là `frontend`, `order`, `catalog` và lấy từng `public_url`.
+Trong JSON tìm `frontend`, `order`, `catalog` và lấy từng `public_url`.
 
-Test từng public endpoint riêng:
+Test:
 
 ```cmd
 curl -H "ngrok-skip-browser-warning: 1" https://ORDER_URL/orders
