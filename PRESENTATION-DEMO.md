@@ -1,7 +1,5 @@
 # Presentation Demo — 2 Microservices / 2 Exposure Models
 
-Mục tiêu: chứng minh hai deployment model khác nhau dù **cả hai đều dùng ngrok HTTPS**.
-
 ## 0. Business architecture
 
 ```text
@@ -16,44 +14,62 @@ Nói:
 
 ---
 
-# CASE 1 — Nginx public, backend private
+# CASE 1 — ngrok Traffic Policy làm reverse proxy
 
 Start:
 
 ```powershell
-docker compose down -v
+docker compose down -v --remove-orphans
 docker compose up -d --build
 docker compose ps
 ```
 
-Lấy URL:
+Lấy public URL:
 
 ```powershell
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
+Trong JSON tìm endpoint/tunnel `public`.
+
 Nói:
 
-> Case 1 ngrok chỉ tunnel vào Frontend/Nginx. Nginx serve React và reverse proxy một số route `/shop/*` tới backend private. Order và Catalog không có public URL riêng.
+> Case 1 không dùng BFF và Nginx cũng không reverse proxy backend. Ngrok dùng Traffic Policy để route theo path, rewrite URL và forward tới các internal endpoint của Order/Catalog. Hai backend không có public URL riêng.
+
+Flow:
+
+```text
+Internet -> one ngrok public URL
+              |
+              +-- / ----------------> Frontend static Nginx
+              +-- /shop/products ---> catalog.internal -> Catalog
+              +-- /shop/orders -----> order.internal   -> Order
+              +-- /shop/checkout ---> order.internal   -> Order
+              X-- /api/* -----------> 404
+```
 
 Test:
 
 ```text
-FE /shop/products             ✅
-FE /api/order/orders          ❌ 404
-localhost:8002                ❌
-localhost:8003                ❌
+BASE/                     ✅ FE
+BASE/shop/products        ✅
+BASE/shop/orders          ✅
+BASE/api/order/orders     ❌ 404
+localhost:8002            ❌
+localhost:8003            ❌
 ```
 
-Chứng minh frontend Nginx thấy Catalog nội bộ:
+Chứng minh frontend không còn trực tiếp thấy backend:
 
 ```powershell
-docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
+docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
 ```
+
+Kỳ vọng fail vì frontend chỉ ở `edge-net`. Ngrok nằm trên `edge-net` + `service-net` và chính ngrok làm reverse proxy.
 
 Câu chốt:
 
-> Client ngoài chỉ đi vào Nginx. Nginx mới reverse proxy các route được cho phép tới backend qua private Docker network. Native Order/Catalog endpoint không có URL Internet riêng.
+> Case 1 chỉ có một public URL. Ngrok là reverse proxy/API gateway có chọn lọc; native Order/Catalog không có public endpoint riêng.
 
 Xong Case 1:
 
@@ -68,12 +84,10 @@ docker compose down
 Start:
 
 ```powershell
-docker compose -f compose.public.yaml down -v
+docker compose -f compose.public.yaml down -v --remove-orphans
 docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
-
-Kỳ vọng chỉ có một container `ngrok`, nhưng nó chạy ba tunnel từ `ngrok/ngrok.yml`.
 
 Lấy cả 3 URL:
 
@@ -81,18 +95,18 @@ Lấy cả 3 URL:
 docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Trong JSON tìm tunnel `frontend`, `order`, `catalog` và lấy từng `public_url`.
+Tìm `frontend`, `order`, `catalog`.
 
 Nói:
 
-> Case 2 không dùng reverse proxy business API qua frontend. Một ngrok agent mở ba public tunnel độc lập: Frontend, Order và Catalog mỗi service có URL Internet riêng.
+> Case 2 không dùng shared reverse proxy cho business API. Frontend, Order và Catalog mỗi service có public URL riêng, dù ba tunnel cùng chạy trong một ngrok agent session.
 
 Flow:
 
 ```text
-Browser -> FE tunnel      -> Frontend Nginx
-Postman -> Order tunnel   -> Order API
-Postman -> Catalog tunnel -> Catalog API
+Browser -> FE_URL       -> Frontend Nginx
+Postman -> ORDER_URL    -> Order API
+Postman -> CATALOG_URL  -> Catalog API
 ```
 
 Test:
@@ -122,22 +136,12 @@ ngrok-skip-browser-warning: 1
 }
 ```
 
-Nói:
-
-> Backend container vẫn không publish host port, nhưng backend API đã public qua tunnel riêng. Frontend Nginx Case 2 chỉ serve React và metadata runtime, không reverse proxy business API.
-
-Internal Order -> Catalog vẫn dùng private network:
+Internal Order -> Catalog vẫn dùng private Docker network:
 
 ```powershell
 docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
 ```
 
-Order -> Redis vẫn fail:
-
-```powershell
-docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
-```
-
 ## Câu kết
 
-> Case 1 dùng Nginx làm public reverse proxy có chọn lọc, còn Order/Catalog không có public URL riêng. Case 2 thì Order và Catalog có public ngrok URL độc lập nên client gọi trực tiếp backend API, không đi qua frontend Nginx. Database ở cả hai case vẫn private.
+> Case 1 có một public URL và ngrok Traffic Policy reverse proxy các route được chọn tới backend private. Case 2 thì Order và Catalog có public ngrok URL riêng, nên client gọi native backend API trực tiếp. Database ở cả hai case vẫn private.
