@@ -1,26 +1,32 @@
 # Frontend Service
 
-Một React UI nhưng có **hai deployment mode**.
+Một React UI với hai deployment mode.
 
-## Case 1 — private backend qua Nginx reverse proxy
+## Case 1 — ngrok reverse proxy, Nginx static-only
 
 Build bằng `Dockerfile.private`.
 
 ```text
-Browser -> HTTPS ngrok -> frontend-service:80 (Nginx) -> private Order/Catalog services
+Browser -> ngrok public endpoint
+             |
+             +-- / ----------------> frontend-service:80
+             +-- selected /shop/* -> private Order/Catalog internal endpoints
 ```
 
-Nginx vừa serve React static files, vừa reverse proxy **chỉ các route được chọn**:
+Nginx trong `frontend-service` **chỉ serve React static files**. Nó không nằm trên `service-net` và không reverse proxy business API.
+
+Case 1 routing do `ngrok/ngrok.private.yml` đảm nhiệm bằng Traffic Policy:
 
 ```text
-GET  /shop/products  -> catalog-service:8002/products
-GET  /shop/orders    -> order-service:8003/orders
-POST /shop/checkout  -> order-service:8003/orders
+/shop/products             -> Catalog /products
+/shop/orders               -> Order /orders
+/shop/checkout             -> Order /orders
+/shop/system/order/*       -> Order metadata routes
+/shop/system/catalog/*     -> Catalog metadata routes
+/api/*                     -> 404
 ```
 
-Các route metadata dưới `/shop/system/...` cũng được proxy có chủ đích để UI hiển thị trạng thái service.
-
-Không có generic `/api/*` proxy; `/api/*` trả `404`. Vì vậy native Order/Catalog API không có public URL riêng trong Case 1.
+Ngrok dùng `url-rewrite` + `forward-internal` tới `order.internal` và `catalog.internal`.
 
 ## Case 2 — independent public service endpoints
 
@@ -32,15 +38,7 @@ Browser -> Order public URL   -> order-service
 Browser -> Catalog public URL -> catalog-service
 ```
 
-Case 2 không dùng shared Gateway. Frontend Nginx chỉ serve static React và endpoint metadata runtime:
-
-```text
-/runtime/tunnels
-```
-
-React dùng metadata này để discover public URL của Order và Catalog, sau đó gọi trực tiếp các backend ngrok URL.
-
-Các business request **không reverse proxy qua frontend Nginx** trong Case 2.
+Frontend Nginx chỉ serve static React và `/runtime/tunnels` để browser discover public URL của Order/Catalog. Business request không reverse proxy qua frontend.
 
 ## Build-time mode
 
@@ -50,7 +48,7 @@ React đọc:
 VITE_DEPLOYMENT_MODE=private|public
 ```
 
-- `private`: UI gọi các route `/shop/*` trên cùng origin; Nginx reverse proxy các route được phép tới backend private.
+- `private`: UI gọi selected `/shop/*` routes trên cùng public ngrok origin; ngrok Traffic Policy route chúng tới backend private.
 - `public`: UI discover hai backend tunnel rồi gọi trực tiếp `Order /orders` và `Catalog /products` qua public ngrok URLs.
 
-Case 2 backend bật CORS để browser từ frontend ngrok origin có thể gọi hai public backend origins. Đây là browser interoperability, không phải security boundary.
+Case 2 backend bật CORS vì frontend và backend nằm trên các public origins khác nhau.
