@@ -48,17 +48,20 @@ function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function discoverTunnel(path, label) {
+async function discoverTunnel(name, label) {
   let lastError = null;
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
-      const response = await fetch(path, { cache: 'no-store' });
+      const response = await fetch('/runtime/tunnels', { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      const tunnel = (payload.tunnels || []).find((item) => item.proto === 'https') || payload.tunnels?.[0];
+      const tunnels = payload.tunnels || [];
+      const tunnel = tunnels.find((item) => item.name === name && item.proto === 'https')
+        || tunnels.find((item) => item.name === name)
+        || tunnels.find((item) => item.name?.startsWith(name) && item.proto === 'https');
       if (tunnel?.public_url) return tunnel.public_url.replace(/\/$/, '');
-      throw new Error('public_url not ready');
+      throw new Error(`${name} public_url not ready`);
     } catch (error) {
       lastError = error;
       await sleep(500);
@@ -73,8 +76,8 @@ let publicEndpointsPromise = null;
 async function getPublicEndpoints() {
   if (!publicEndpointsPromise) {
     publicEndpointsPromise = Promise.all([
-      discoverTunnel('/runtime/order-tunnel', 'Order'),
-      discoverTunnel('/runtime/catalog-tunnel', 'Catalog')
+      discoverTunnel('order', 'Order'),
+      discoverTunnel('catalog', 'Catalog')
     ])
       .then(([orderBase, catalogBase]) => ({
         orderBase,
