@@ -91,28 +91,42 @@ External client vẫn có thể gọi `/shop/checkout` vì đó là public BFF c
 
 ---
 
-# Case 2 — ba public ngrok endpoint độc lập
+# Case 2 — ba public URL độc lập từ một ngrok agent
 
 Deployment: `compose.public.yaml`.
 
-Case 2 không dùng shared Nginx Gateway.
+Case 2 không dùng shared Nginx Gateway. Một ngrok agent mở ba tunnel trong cùng một agent session:
 
 ```text
                          INTERNET
             +---------------+---------------+
             |               |               |
             v               v               v
-      ngrok-frontend    ngrok-order     ngrok-catalog
+       FE public URL    Order public URL  Catalog public URL
             |               |               |
-            v               v               v
-       frontend        order-service    catalog-service
-                           |                 |
-                    order-data-net    catalog-data-net
-                           |                 |
-                       PostgreSQL           Redis
+            +---------------+---------------+
+                            |
+                    one ngrok agent
+                            |
+             +--------------+--------------+
+             |              |              |
+             v              v              v
+         frontend      order-service   catalog-service
+                           |                |
+                    order-data-net   catalog-data-net
+                           |                |
+                       PostgreSQL          Redis
 ```
 
-Mỗi public component có URL riêng:
+Tunnel definitions nằm trong `ngrok/ngrok.yml`:
+
+```text
+frontend -> frontend-service:80
+order    -> order-service:8003
+catalog  -> catalog-service:8002
+```
+
+Mỗi public component vẫn có URL riêng:
 
 ```text
 https://<frontend>.ngrok-free.app/
@@ -123,16 +137,16 @@ https://<catalog>.ngrok-free.app/products
 Không có shared path kiểu:
 
 ```text
-/frontend-ngrok/api/order/...
-/frontend-ngrok/api/catalog/...
+/frontend-url/api/order/...
+/frontend-url/api/catalog/...
 ```
 
-Browser tải React từ frontend tunnel. Sau đó React discover runtime URL của Order/Catalog và gọi trực tiếp hai backend tunnel.
+Browser tải React từ frontend tunnel. Sau đó React discover runtime URL của Order/Catalog qua ngrok inspector metadata và gọi trực tiếp hai backend tunnel.
 
 ```text
-Browser -> ngrok-frontend -> frontend-service
-Browser -> ngrok-order    -> order-service
-Browser -> ngrok-catalog  -> catalog-service
+Browser -> FE public URL      -> frontend-service
+Browser -> Order public URL   -> order-service
+Browser -> Catalog public URL -> catalog-service
 ```
 
 Do các origin khác nhau, Order và Catalog bật CORS cho demo. Đây là browser interoperability, không phải security boundary.
@@ -154,9 +168,9 @@ CASE 1
 Internet -> ngrok -> BFF -> private native Order/Catalog APIs
 
 CASE 2
-Internet -> ngrok-frontend -> Frontend
-Internet -> ngrok-order    -> Order API
-Internet -> ngrok-catalog  -> Catalog API
+Internet -> FE tunnel      -> Frontend
+Internet -> Order tunnel   -> Order API
+Internet -> Catalog tunnel -> Catalog API
 ```
 
 | | Case 1 | Case 2 |
@@ -167,8 +181,9 @@ Internet -> ngrok-catalog  -> Catalog API
 | Host publish 8002/8003 | ❌ | ❌ |
 | Database public | ❌ | ❌ |
 | Order -> Catalog nội bộ | ✅ | ✅ |
+| Ngrok agent sessions cho deployment | 1 | 1 |
 
-Điểm khác biệt chính là **backend có public endpoint riêng hay không**, không phải `ports:`.
+Điểm khác biệt chính là **backend có public endpoint riêng hay không**, không phải `ports:` hay số agent process.
 
 ---
 
@@ -217,9 +232,7 @@ Order + Catalog healthy -> Frontend/BFF healthy -> ngrok starts
 Case 2:
 
 ```text
-Frontend healthy -> ngrok-frontend
-Order healthy    -> ngrok-order
-Catalog healthy  -> ngrok-catalog
+Frontend + Order + Catalog healthy -> one ngrok agent -> 3 tunnels
 ```
 
 # Boundary proof
