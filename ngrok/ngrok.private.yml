@@ -1,0 +1,96 @@
+version: "3"
+
+agent:
+  web_addr: 0.0.0.0:4040
+  web_allow_hosts:
+    - ngrok
+    - localhost
+    - 127.0.0.1
+
+endpoints:
+  - name: public
+    url: https://
+    upstream:
+      url: http://frontend-service:80
+    traffic_policy:
+      on_http_request:
+        - name: block-raw-api
+          expressions:
+            - "req.url.path == '/api' || req.url.path.startsWith('/api/')"
+          actions:
+            - type: custom-response
+              config:
+                status_code: 404
+                body: '{"detail":"Raw backend API paths are not exposed in Case 1. Only selected /shop routes are routed by ngrok Traffic Policy."}'
+                headers:
+                  content-type: application/json
+
+        - name: catalog-products
+          expressions:
+            - "req.url.path == '/shop/products'"
+          actions:
+            - type: url-rewrite
+              config:
+                from: /shop/products
+                to: /products
+            - type: forward-internal
+              config:
+                url: https://catalog.internal
+
+        - name: order-list
+          expressions:
+            - "req.url.path == '/shop/orders'"
+          actions:
+            - type: url-rewrite
+              config:
+                from: /shop/orders
+                to: /orders
+            - type: forward-internal
+              config:
+                url: https://order.internal
+
+        - name: order-checkout
+          expressions:
+            - "req.url.path == '/shop/checkout'"
+          actions:
+            - type: url-rewrite
+              config:
+                from: /shop/checkout
+                to: /orders
+            - type: forward-internal
+              config:
+                url: https://order.internal
+
+        - name: order-system
+          expressions:
+            - "req.url.path.startsWith('/shop/system/order/')"
+          actions:
+            - type: url-rewrite
+              config:
+                from: /shop/system/order/(.*)
+                to: /$1
+            - type: forward-internal
+              config:
+                url: https://order.internal
+
+        - name: catalog-system
+          expressions:
+            - "req.url.path.startsWith('/shop/system/catalog/')"
+          actions:
+            - type: url-rewrite
+              config:
+                from: /shop/system/catalog/(.*)
+                to: /$1
+            - type: forward-internal
+              config:
+                url: https://catalog.internal
+
+  - name: order-internal
+    url: https://order.internal
+    upstream:
+      url: http://order-service:8003
+
+  - name: catalog-internal
+    url: https://catalog.internal
+    upstream:
+      url: http://catalog-service:8002
