@@ -43,13 +43,13 @@ function ArchitectureCard() {
         showIcon
         message={
           isPrivate
-            ? 'ngrok Traffic Policy is the public reverse proxy. Nginx only serves the React UI; raw Order/Catalog API paths are not exposed.'
+            ? 'Only the Frontend Nginx reverse proxy is published. Raw Order/Catalog API routes are not exposed to external clients.'
             : 'Frontend, Order API and Catalog API each have their own ngrok HTTPS endpoint. There is no shared API gateway.'
         }
       />
       <pre className="architecture-pre">
         {isPrivate
-          ? `Internet\n   |\n   v\nngrok Gateway / Traffic Policy\n   +------ / ----------------> Frontend (static Nginx)\n   +------ /shop/orders -----> Order Service ------> Catalog Service\n   +------ /shop/checkout ---> Order Service\n   +------ /shop/products -------------------------> Catalog Service\n                                  |                       |\n                            order-data-net         catalog-data-net\n                                  |                       |\n                              PostgreSQL                 Redis`
+          ? `Internet\n   |\n   v\nngrok HTTPS tunnel\n   |\nFrontend + Nginx reverse proxy\n   |  private service-net\n   +------> Order Service ------> Catalog Service\n              |                       |\n        order-data-net         catalog-data-net\n              |                       |\n          PostgreSQL                 Redis`
           : `Internet\n   |\n   +----> ngrok-FE -------> Frontend\n   |\n   +----> ngrok-Order ----> Order API ------> Catalog Service\n   |                           |                   |\n   |                     order-data-net     catalog-data-net\n   |                           |                   |\n   |                       PostgreSQL             Redis\n   |\n   +----> ngrok-Catalog --> Catalog API`}
       </pre>
     </Card>
@@ -223,9 +223,9 @@ export default function App() {
           <Alert
             showIcon
             type={deploymentMode === 'private' ? 'info' : 'success'}
-            message={deploymentMode === 'private' ? 'Private mode: browser → ngrok Traffic Policy → selected private services' : 'Public mode: three independent HTTPS ngrok endpoints'}
+            message={deploymentMode === 'private' ? 'Private mode: browser → ngrok → Nginx reverse proxy → private services' : 'Public mode: three independent HTTPS ngrok endpoints'}
             description={deploymentMode === 'private'
-              ? 'Nginx only serves static React. ngrok rewrites and forwards selected /shop routes to internal Order/Catalog endpoints; /api/* is rejected at the ngrok edge.'
+              ? 'Nginx exposes only selected /shop routes to the private services. Raw /api/* backend paths are not proxied.'
               : 'Browser loads the frontend through the FE tunnel, then calls Order and Catalog directly through their own public ngrok URLs. There is no shared /api gateway path.'}
           />
           <Card title="Runtime service metadata">
@@ -256,7 +256,7 @@ export default function App() {
       <Header className="app-header">
         <div>
           <Title level={3} className="header-title">Mini Shop · Docker Compose Architecture Demo</Title>
-          <Text className="header-subtitle">Order + Catalog · {deploymentMode === 'private' ? 'Case 1: ngrok reverse proxy + private backend' : 'Case 2: independent public service endpoints'}</Text>
+          <Text className="header-subtitle">Order + Catalog · {deploymentMode === 'private' ? 'Case 1: Nginx reverse proxy + private backend' : 'Case 2: independent public service endpoints'}</Text>
         </div>
         <Button onClick={refreshAll} loading={loading}>Refresh</Button>
       </Header>
