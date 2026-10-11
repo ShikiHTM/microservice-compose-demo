@@ -6,13 +6,11 @@ Một React UI nhưng có **hai runtime mode** tùy deployment.
 
 Build bằng `Dockerfile.bff`.
 
-Public flow:
-
 ```text
 Browser -> HTTPS ngrok -> frontend-bff:3000 -> private Order/Catalog services
 ```
 
-`frontend-bff:3000` là port nội bộ trong Docker network, không publish ra host. Runtime là Node.js/Express; nó serve React bundle và cung cấp BFF contract:
+Runtime là Node.js/Express; nó serve React bundle và cung cấp BFF contract:
 
 ```text
 GET  /shop/products
@@ -21,27 +19,28 @@ POST /shop/checkout
 GET  /shop/system
 ```
 
-Không có generic `/api/*` proxy; `/api/*` trả 404 có chủ đích. BFF nằm trên cả `edge-net` và `service-net`; ngrok chỉ nằm trên `edge-net`, còn backend chỉ giao tiếp qua `service-net`.
+Không có generic `/api/*` proxy; `/api/*` trả 404 có chủ đích.
 
-## Case 2 — public APIs
+## Case 2 — independent public service endpoints
 
 Build bằng `Dockerfile`.
 
-Public flow:
-
 ```text
-Browser/API client -> HTTPS ngrok -> Gateway
+Browser -> ngrok-frontend -> frontend-service
+Browser -> ngrok-order    -> order-service
+Browser -> ngrok-catalog  -> catalog-service
 ```
 
-Runtime frontend là Nginx static server. Nó **không proxy backend API**. Public routing thuộc `gateway/nginx.conf`:
+Case 2 không dùng shared Gateway. Frontend Nginx chỉ serve static React và hai endpoint metadata nội bộ:
 
 ```text
-/                 -> frontend-service
-/api/order/*      -> order-service
-/api/catalog/*    -> catalog-service
+/runtime/order-tunnel
+/runtime/catalog-tunnel
 ```
 
-Vì vậy public API client không đi qua frontend service.
+React dùng metadata này để discover public URL của Order và Catalog tại runtime, sau đó gọi trực tiếp các backend ngrok URL.
+
+Các business request **không proxy qua frontend**.
 
 ## Build-time mode
 
@@ -52,4 +51,6 @@ VITE_DEPLOYMENT_MODE=private|public
 ```
 
 - `private`: UI gọi BFF `/shop/*`.
-- `public`: UI gọi Gateway `/api/order/*` và `/api/catalog/*`.
+- `public`: UI discover hai backend tunnel rồi gọi trực tiếp `Order /orders` và `Catalog /products` qua public ngrok URLs.
+
+Case 2 backend bật CORS để browser từ frontend ngrok origin có thể gọi hai public backend origins. Đây là cấu hình demo; production nên giới hạn allowed origins.
