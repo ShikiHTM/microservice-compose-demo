@@ -2,7 +2,7 @@
 
 Trước khi chạy, điền `NGROK_AUTHTOKEN` vào `.env`.
 
-## Case 1 — ngrok -> Frontend/BFF, backend private
+## Case 1 — ngrok -> Frontend/Nginx, backend private
 
 ```cmd
 docker compose down -v
@@ -16,7 +16,7 @@ Lấy URL:
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Test BFF:
+Test Nginx reverse proxy:
 
 ```cmd
 curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/products
@@ -31,10 +31,10 @@ curl http://localhost:8002/products
 curl http://localhost:8003/orders
 ```
 
-BFF gọi Catalog nội bộ:
+Frontend Nginx gọi Catalog nội bộ:
 
 ```cmd
-docker compose exec frontend-bff node -e "fetch('http://catalog-service:8002/products').then(r=>r.text()).then(console.log)"
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
 
 Xong Case 1:
