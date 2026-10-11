@@ -37,20 +37,20 @@ function statusTag(status) {
 function ArchitectureCard() {
   const isPrivate = deploymentMode === 'private';
   return (
-    <Card title={`Deployment architecture · ${isPrivate ? 'CASE 1 PRIVATE BACKEND' : 'CASE 2 PUBLIC API'}`}>
+    <Card title={`Deployment architecture · ${isPrivate ? 'CASE 1 PRIVATE BACKEND' : 'CASE 2 INDEPENDENT PUBLIC APIs'}`}>
       <Alert
         type={isPrivate ? 'info' : 'success'}
         showIcon
         message={
           isPrivate
             ? 'Only the Frontend/BFF is published. Raw Order/Catalog API routes are not exposed to external clients.'
-            : 'Internet traffic enters through HTTPS ngrok → Gateway. Frontend and backend APIs are separate destinations behind the gateway.'
+            : 'Frontend, Order API and Catalog API each have their own ngrok HTTPS endpoint. There is no shared API gateway.'
         }
       />
       <pre className="architecture-pre">
         {isPrivate
           ? `Internet\n   |\n   v\nFrontend + BFF (public :3000)\n   |  private service-net\n   +------> Order Service ------> Catalog Service\n              |                       |\n        order-data-net         catalog-data-net\n              |                       |\n          PostgreSQL                 Redis`
-          : `Internet\n   | HTTPS :443\n   v\nngrok edge\n   | edge-net\n   v\nGateway\n   +------> Frontend\n   +------> Order API ------> Catalog Service\n   +------> Catalog API\n              |                  |\n        order-data-net     catalog-data-net\n              |                  |\n          PostgreSQL            Redis`}
+          : `Internet\n   |\n   +----> ngrok-FE -------> Frontend\n   |\n   +----> ngrok-Order ----> Order API ------> Catalog Service\n   |                           |                   |\n   |                     order-data-net     catalog-data-net\n   |                           |                   |\n   |                       PostgreSQL             Redis\n   |\n   +----> ngrok-Catalog --> Catalog API`}
       </pre>
     </Card>
   );
@@ -223,10 +223,10 @@ export default function App() {
           <Alert
             showIcon
             type={deploymentMode === 'private' ? 'info' : 'success'}
-            message={deploymentMode === 'private' ? 'Private mode: browser → BFF → private services' : 'Public mode: HTTPS ngrok → gateway → frontend or public API'}
+            message={deploymentMode === 'private' ? 'Private mode: browser → BFF → private services' : 'Public mode: three independent HTTPS ngrok endpoints'}
             description={deploymentMode === 'private'
               ? 'There is no generic /api proxy. The BFF exposes only /shop business operations.'
-              : 'The gateway routes / to frontend, /api/order to Order and /api/catalog to Catalog. Frontend is not in the API request path.'}
+              : 'Browser loads the frontend through the FE tunnel, then calls Order and Catalog directly through their own public ngrok URLs. There is no shared /api gateway path.'}
           />
           <Card title="Runtime service metadata">
             <Table rowKey="service" columns={serviceColumns} dataSource={serviceRows} pagination={false} scroll={{ x: 900 }} />
@@ -256,7 +256,7 @@ export default function App() {
       <Header className="app-header">
         <div>
           <Title level={3} className="header-title">Mini Shop · Docker Compose Architecture Demo</Title>
-          <Text className="header-subtitle">Order + Catalog · {deploymentMode === 'private' ? 'Case 1: private backend' : 'Case 2: public APIs through HTTPS edge'}</Text>
+          <Text className="header-subtitle">Order + Catalog · {deploymentMode === 'private' ? 'Case 1: private backend' : 'Case 2: independent public service endpoints'}</Text>
         </div>
         <Button onClick={refreshAll} loading={loading}>Refresh</Button>
       </Header>
