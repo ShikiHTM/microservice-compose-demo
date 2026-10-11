@@ -68,7 +68,9 @@ docker compose down
 
 ---
 
-# CASE 2 — 3 public ngrok endpoint độc lập
+# CASE 2 — 3 public URL độc lập từ 1 ngrok agent
+
+Case 2 dùng một container `ngrok` chạy ba tunnel (`frontend`, `order`, `catalog`) trong cùng một agent session.
 
 Start:
 
@@ -78,20 +80,32 @@ docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy 3 URL:
-
-```powershell
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-frontend:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-order:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-catalog:4040/api/tunnels
-```
-
-Bạn sẽ có 3 URL riêng:
+Kỳ vọng chỉ có **một** service ngrok:
 
 ```text
-FE_URL       = https://...ngrok-free.app
-ORDER_URL    = https://...ngrok-free.app
-CATALOG_URL  = https://...ngrok-free.app
+mini-shop-public-ngrok-1    Up
+```
+
+Lấy cả 3 URL:
+
+```powershell
+docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
+```
+
+Trong JSON tìm các tunnel tên:
+
+```text
+frontend
+order
+catalog
+```
+
+Mỗi tunnel có `public_url` riêng:
+
+```text
+FE_URL       = public_url của frontend
+ORDER_URL    = public_url của order
+CATALOG_URL  = public_url của catalog
 ```
 
 Test trên browser/Postman:
@@ -167,9 +181,9 @@ CASE 1
 Internet -> ngrok -> BFF -> native backend private
 
 CASE 2
-Internet -> ngrok-FE      -> Frontend
-Internet -> ngrok-Order   -> Order API
-Internet -> ngrok-Catalog -> Catalog API
+Internet -> FE tunnel      -> Frontend
+Internet -> Order tunnel   -> Order API
+Internet -> Catalog tunnel -> Catalog API
 ```
 
-Case 2 không còn dùng shared Gateway. Mỗi service public có endpoint riêng, trong khi `localhost:8002/8003` vẫn đóng.
+Case 2 không dùng shared Gateway. Ba public URL riêng nhưng chỉ dùng **một ngrok agent session**.
