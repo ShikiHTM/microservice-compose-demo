@@ -89,41 +89,46 @@ services:
       retries: 10
       start_period: 5s
     networks:
-      - service-net
-    restart: unless-stopped
-
-  gateway:
-    image: nginx:1.27-alpine
-    volumes:
-      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      frontend-service:
-        condition: service_healthy
-      order-service:
-        condition: service_healthy
-      catalog-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    networks:
       - edge-net
       - service-net
     restart: unless-stopped
 
-  ngrok:
+  ngrok-frontend:
     image: ngrok/ngrok:latest
-    command: ["http", "gateway:80"]
+    command: ["http", "frontend-service:80"]
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
     depends_on:
-      gateway:
+      frontend-service:
         condition: service_healthy
     networks:
       - edge-net
+    restart: unless-stopped
+
+  ngrok-order:
+    image: ngrok/ngrok:latest
+    command: ["http", "order-service:8003"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
+    depends_on:
+      order-service:
+        condition: service_healthy
+    networks:
+      - edge-net
+      - service-net
+    restart: unless-stopped
+
+  ngrok-catalog:
+    image: ngrok/ngrok:latest
+    command: ["http", "catalog-service:8002"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
+    depends_on:
+      catalog-service:
+        condition: service_healthy
+    networks:
+      - edge-net
+      - service-net
     restart: unless-stopped
 
 volumes:
