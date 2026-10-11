@@ -40,7 +40,7 @@ Order gọi Catalog bằng REST. Order không đọc Redis trực tiếp; Catalo
 
 ---
 
-# Case 1 — một public BFF, native backend private
+# Case 1 — Nginx public, native backend private
 
 Deployment: `compose.yaml`.
 
@@ -55,9 +55,10 @@ Deployment: `compose.yaml`.
                          edge-net
                             |
                             v
-                    +---------------+
-                    | Frontend/BFF  |
-                    +-------+-------+
+                +-----------------------+
+                | Frontend + Nginx      |
+                | selected reverse proxy|
+                +-----------+-----------+
                             |
                        service-net
                     /               \
@@ -69,25 +70,24 @@ Deployment: `compose.yaml`.
              PostgreSQL              Redis
 ```
 
-Ngrok chỉ có đường tới BFF. Order/Catalog không có public endpoint riêng và không publish host port.
+Ngrok chỉ có đường tới `frontend-service`. Order/Catalog không có public endpoint riêng và không publish host port.
 
-Public BFF contract:
+Nginx serve React và reverse proxy **chỉ các route được chọn**:
 
 ```text
-GET  /shop/products
-GET  /shop/orders
-POST /shop/checkout
-GET  /shop/system
+GET  /shop/products  -> catalog-service:8002/products
+GET  /shop/orders    -> order-service:8003/orders
+POST /shop/checkout  -> order-service:8003/orders
 ```
 
-Native backend routes không được proxy ra ngoài:
+Các route metadata `/shop/system/...` cũng được proxy riêng cho UI. Không có generic `/api/*` proxy:
 
 ```text
 /api/order/*    -> 404
 /api/catalog/*  -> 404
 ```
 
-External client vẫn có thể gọi `/shop/checkout` vì đó là public BFF contract. Case 1 bảo vệ **native microservice interface**, không phải phân biệt browser với Postman.
+External client vẫn có thể gọi `/shop/checkout` vì đó là public frontend route. Case 1 bảo vệ **native microservice interface và direct service exposure**, không phải phân biệt browser với Postman.
 
 ---
 
@@ -126,7 +126,7 @@ order    -> order-service:8003
 catalog  -> catalog-service:8002
 ```
 
-Mỗi public component vẫn có URL riêng:
+Mỗi public component có URL riêng:
 
 ```text
 https://<frontend>.ngrok-free.app/
@@ -134,20 +134,15 @@ https://<order>.ngrok-free.app/orders
 https://<catalog>.ngrok-free.app/products
 ```
 
-Không có shared path kiểu:
-
-```text
-/frontend-url/api/order/...
-/frontend-url/api/catalog/...
-```
-
-Browser tải React từ frontend tunnel. Sau đó React discover runtime URL của Order/Catalog qua ngrok inspector metadata và gọi trực tiếp hai backend tunnel.
+Browser tải React từ frontend tunnel, discover runtime URL của Order/Catalog qua ngrok inspector metadata, rồi gọi trực tiếp hai backend tunnel.
 
 ```text
 Browser -> FE public URL      -> frontend-service
 Browser -> Order public URL   -> order-service
 Browser -> Catalog public URL -> catalog-service
 ```
+
+Frontend Nginx trong Case 2 **không reverse proxy business API**. Nó chỉ serve React và expose runtime tunnel metadata.
 
 Do các origin khác nhau, Order và Catalog bật CORS cho demo. Đây là browser interoperability, không phải security boundary.
 
@@ -165,7 +160,7 @@ Order không đi vòng ra Internet/ngrok để reserve stock.
 
 ```text
 CASE 1
-Internet -> ngrok -> BFF -> private native Order/Catalog APIs
+Internet -> ngrok -> Frontend/Nginx -> selected /shop routes -> private backend
 
 CASE 2
 Internet -> FE tunnel      -> Frontend
@@ -176,6 +171,7 @@ Internet -> Catalog tunnel -> Catalog API
 | | Case 1 | Case 2 |
 |---|---|---|
 | Frontend public | ✅ | ✅ |
+| Nginx reverse proxy business API | ✅, selected `/shop/*` | ❌ |
 | Order có public URL riêng | ❌ | ✅ |
 | Catalog có public URL riêng | ❌ | ✅ |
 | Host publish 8002/8003 | ❌ | ❌ |
@@ -183,7 +179,7 @@ Internet -> Catalog tunnel -> Catalog API
 | Order -> Catalog nội bộ | ✅ | ✅ |
 | Ngrok agent sessions cho deployment | 1 | 1 |
 
-Điểm khác biệt chính là **backend có public endpoint riêng hay không**, không phải `ports:` hay số agent process.
+Điểm khác biệt chính là **backend có public endpoint riêng hay không**.
 
 ---
 
@@ -226,7 +222,7 @@ Catalog healthy --------------------------+
 Case 1:
 
 ```text
-Order + Catalog healthy -> Frontend/BFF healthy -> ngrok starts
+Order + Catalog healthy -> Frontend/Nginx healthy -> ngrok starts
 ```
 
 Case 2:
