@@ -101,24 +101,32 @@ docker compose exec frontend-bff node -e "fetch('http://catalog-service:8002/pro
 
 ---
 
-# CASE 2 — Frontend, Order, Catalog có 3 public ngrok endpoint độc lập
+# CASE 2 — ba public URL độc lập, dùng một ngrok agent session
 
 File: `compose.public.yaml`.
 
-Case 2 **không dùng shared API Gateway** nữa.
+Case 2 **không dùng shared API Gateway**. Một container `ngrok` chạy `start --all` và tạo ba tunnel trong cùng một agent session:
 
 ```text
 Internet
    |
-   +----> ngrok-frontend ----> frontend-service:80
+   +----> FE public URL -------> frontend-service:80
    |
-   +----> ngrok-order -------> order-service:8003
+   +----> Order public URL ----> order-service:8003
    |
-   +----> ngrok-catalog -----> catalog-service:8002
+   +----> Catalog public URL --> catalog-service:8002
 
 Order Service ----private service-net----> Catalog Service
       |                                      |
  PostgreSQL                                Redis
+```
+
+Các tunnel được khai báo trong `ngrok/ngrok.yml`:
+
+```text
+frontend -> frontend-service:80
+order    -> order-service:8003
+catalog  -> catalog-service:8002
 ```
 
 Backend vẫn **không publish host port**. Vì vậy:
@@ -136,7 +144,7 @@ https://<order-url>.ngrok-free.app/orders
 https://<catalog-url>.ngrok-free.app/products
 ```
 
-Frontend React chạy trong browser sẽ gọi trực tiếp hai backend ngrok URL. `frontend-service` chỉ expose metadata để browser tự discover URL runtime; nó không proxy business API.
+Frontend React chạy trong browser gọi trực tiếp hai backend public URL. `frontend-service` chỉ expose metadata từ ngrok inspector để browser discover URL runtime; nó không proxy business API.
 
 Order vẫn gọi Catalog nội bộ bằng:
 
@@ -154,12 +162,18 @@ docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy 3 URL:
+Lấy cả 3 URL từ **một** ngrok agent:
 
 ```powershell
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-frontend:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-order:4040/api/tunnels
-docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok-catalog:4040/api/tunnels
+docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
+```
+
+Trong JSON tìm các tunnel có name:
+
+```text
+frontend
+order
+catalog
 ```
 
 Test:
@@ -200,13 +214,14 @@ CASE 1
 Internet -> ngrok -> BFF -> private native Order/Catalog APIs
 
 CASE 2
-Internet -> ngrok-FE      -> Frontend
-Internet -> ngrok-Order   -> Order API
-Internet -> ngrok-Catalog -> Catalog API
+Internet -> FE tunnel      -> Frontend
+Internet -> Order tunnel   -> Order API
+Internet -> Catalog tunnel -> Catalog API
 ```
 
 - Case 1: backend microservices **không có public endpoint riêng**.
 - Case 2: mỗi backend microservice **có public endpoint riêng**.
+- Case 2 dùng **một ngrok agent session nhưng ba tunnel/public URL**, tránh giới hạn số simultaneous agent sessions.
 - Cả hai case đều không cần publish `8002/8003` ra host.
 - Database luôn private.
 
@@ -256,7 +271,8 @@ xóa cả volumes.
 
 ```text
 compose.yaml                     Case 1 — ngrok -> Frontend/BFF
-compose.public.yaml              Case 2 — 3 independent ngrok endpoints
+compose.public.yaml              Case 2 — one ngrok agent, 3 public tunnels
+ngrok/ngrok.yml                  Case 2 tunnel definitions
 frontend-service/Dockerfile.bff  Case 1 Node/Express BFF runtime
 frontend-service/Dockerfile      Case 2 React/Nginx runtime
 frontend-service/server.js       Case 1 BFF business contract
