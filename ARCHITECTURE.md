@@ -1,6 +1,6 @@
 # Architecture — 2 Microservices, 2 Exposure Models
 
-Project chỉ còn hai business microservices: **Order** và **Catalog**. Mục tiêu là tách rõ service ownership, Docker network boundary và public exposure boundary.
+Project có hai business microservices: **Order** và **Catalog**. Mục tiêu là tách rõ service ownership, Docker network boundary và public exposure boundary.
 
 ## Business ownership
 
@@ -38,34 +38,28 @@ Order gọi Catalog bằng REST. Order không đọc Redis trực tiếp; Catalo
 | PostgreSQL | ❌ | ✅ | ❌ |
 | Redis | ❌ | ❌ | ✅ |
 
-Điều này hỗ trợ datastore ownership ở tầng topology: Order có route trực tiếp tới PostgreSQL của mình nhưng không có Docker service-discovery path tới Redis của Catalog.
-
 ---
 
-# Case 1 — ngrok public edge, frontend/BFF public, backend private
+# Case 1 — một public BFF, native backend private
 
-Deployment file: `compose.yaml`.
+Deployment: `compose.yaml`.
 
 ```text
                          INTERNET
                             |
-                       HTTPS :443
+                         HTTPS
                             |
                             v
-                       +---------+
-                       |  ngrok  |
-                       +----+----+
+                         ngrok
                             |
                          edge-net
                             |
                             v
                     +---------------+
                     | Frontend/BFF  |
-                    | public app    |
                     +-------+-------+
                             |
                        service-net
-                         private
                     /               \
                    v                 v
             order-service -----> catalog-service
@@ -75,24 +69,9 @@ Deployment file: `compose.yaml`.
              PostgreSQL              Redis
 ```
 
-Không service nào publish host port. Ngrok là public entry point duy nhất.
+Ngrok chỉ có đường tới BFF. Order/Catalog không có public endpoint riêng và không publish host port.
 
-Network membership bổ sung của Case 1:
-
-| Component | edge-net | service-net |
-|---|:---:|:---:|
-| ngrok | ✅ | ❌ |
-| frontend-bff | ✅ | ✅ |
-| order-service | ❌ | ✅ |
-| catalog-service | ❌ | ✅ |
-
-Điểm này làm public exposure boundary rõ hơn: ngrok chỉ có route tới BFF qua `edge-net`; backend chỉ nằm sau BFF trên `service-net`.
-
-### Tại sao cần BFF?
-
-React SPA chạy trong browser. Nếu public một generic route như `/api/order/* -> order-service`, external client vẫn có thể gọi raw Order API qua public URL bằng curl/Postman. Khi đó backend container không public trực tiếp nhưng backend API vẫn public gián tiếp.
-
-Case 1 tránh điều đó bằng BFF contract riêng:
+Public BFF contract:
 
 ```text
 GET  /shop/products
@@ -101,133 +80,123 @@ POST /shop/checkout
 GET  /shop/system
 ```
 
-BFF thực hiện internal REST calls server-side. Nó **không** có generic `/api/*` proxy; `/api/*` được trả 404 có chủ đích.
-
-Do đó:
+Native backend routes không được proxy ra ngoài:
 
 ```text
-Public interface:  ngrok -> frontend/BFF business contract
-Private interface: native Order/Catalog APIs
+/api/order/*    -> 404
+/api/catalog/*  -> 404
 ```
 
-External user vẫn có thể gọi `/shop/checkout` bằng HTTP client vì đó là public frontend contract. Điều bị ẩn là native backend contract, không phải toàn bộ HTTP interaction của frontend.
-
-Không có host-port bypass:
-
-```text
-localhost:3000  ❌
-localhost:8002  ❌
-localhost:8003  ❌
-```
+External client vẫn có thể gọi `/shop/checkout` vì đó là public BFF contract. Case 1 bảo vệ **native microservice interface**, không phải phân biệt browser với Postman.
 
 ---
 
-# Case 2 — ngrok public edge + Gateway + public backend APIs
+# Case 2 — ba public ngrok endpoint độc lập
 
-Deployment file: `compose.public.yaml`.
+Deployment: `compose.public.yaml`.
+
+Case 2 không dùng shared Nginx Gateway.
 
 ```text
                          INTERNET
-                            |
-                       HTTPS :443
-                            |
-                            v
-                       +---------+
-                       |  ngrok  |
-                       +----+----+
-                            |
-                         edge-net
-                            |
-                            v
-                       +---------+
-                       | Gateway |
-                       |  Nginx  |
-                       +----+----+
-                            |
-                       service-net
-          +-----------------+------------------+
-          |                 |                  |
-          v                 v                  v
-       frontend        order-service      catalog-service
-                           |                  |
-                    order-data-net     catalog-data-net
-                           |                  |
-                       PostgreSQL            Redis
+            +---------------+---------------+
+            |               |               |
+            v               v               v
+      ngrok-frontend    ngrok-order     ngrok-catalog
+            |               |               |
+            v               v               v
+       frontend        order-service    catalog-service
+                           |                 |
+                    order-data-net    catalog-data-net
+                           |                 |
+                       PostgreSQL           Redis
 ```
 
-Gateway routing:
+Mỗi public component có URL riêng:
 
 ```text
-/                  -> frontend-service:80
-/api/order/*       -> order-service:8003
-/api/catalog/*     -> catalog-service:8002
+https://<frontend>.ngrok-free.app/
+https://<order>.ngrok-free.app/orders
+https://<catalog>.ngrok-free.app/products
 ```
 
-Frontend và API là **các destination ngang hàng** sau gateway. Public API request không đi qua frontend service.
-
-### Public request flows
-
-Website:
+Không có shared path kiểu:
 
 ```text
-Browser -> HTTPS 443 -> ngrok -> Gateway -> Frontend
+/frontend-ngrok/api/order/...
+/frontend-ngrok/api/catalog/...
 ```
 
-API client:
+Browser tải React từ frontend tunnel. Sau đó React discover runtime URL của Order/Catalog và gọi trực tiếp hai backend tunnel.
 
 ```text
-Mobile/Postman/Partner -> HTTPS 443 -> ngrok -> Gateway -> Order/Catalog
+Browser -> ngrok-frontend -> frontend-service
+Browser -> ngrok-order    -> order-service
+Browser -> ngrok-catalog  -> catalog-service
 ```
 
-Internal microservice call:
+Do các origin khác nhau, Order và Catalog bật CORS cho demo. Đây là browser interoperability, không phải security boundary.
+
+Internal microservice call vẫn giữ private:
 
 ```text
-Order -> service-net -> Catalog
+order-service -> service-net -> catalog-service:8002
 ```
 
-Order không đi vòng ra ngrok để gọi Catalog.
+Order không đi vòng ra Internet/ngrok để reserve stock.
 
 ---
 
-# So sánh public exposure boundary
+# So sánh exposure boundary
 
 ```text
 CASE 1
-Internet -> ngrok -> Frontend/BFF -> private Order/Catalog
+Internet -> ngrok -> BFF -> private native Order/Catalog APIs
 
 CASE 2
-Internet -> ngrok -> Gateway -> Frontend
-                            -> Order API
-                            -> Catalog API
+Internet -> ngrok-frontend -> Frontend
+Internet -> ngrok-order    -> Order API
+Internet -> ngrok-catalog  -> Catalog API
 ```
 
-Cả hai case đều dùng ngrok làm HTTPS public edge. Điểm khác biệt là **thành phần nhận tunnel và contract được expose**:
+| | Case 1 | Case 2 |
+|---|---|---|
+| Frontend public | ✅ | ✅ |
+| Order có public URL riêng | ❌ | ✅ |
+| Catalog có public URL riêng | ❌ | ✅ |
+| Host publish 8002/8003 | ❌ | ❌ |
+| Database public | ❌ | ❌ |
+| Order -> Catalog nội bộ | ✅ | ✅ |
 
-- Case 1: ngrok tunnel thẳng vào BFF; native backend API private.
-- Case 2: ngrok tunnel vào Gateway; Gateway intentionally expose frontend và native backend APIs.
+Điểm khác biệt chính là **backend có public endpoint riêng hay không**, không phải `ports:`.
 
 ---
 
-# HTTPS rule
+# Ngrok và Docker ports
 
-Ngrok cung cấp public TLS edge. Traffic public dùng HTTPS/443. Tunnel nội bộ có thể forward HTTP tới container đích mà không đồng nghĩa port HTTP đó được expose ra Internet.
+`EXPOSE` hoặc container port không tự public ra host.
 
 ```text
-Case 1 public: HTTPS -> ngrok -> frontend-bff:3000 (internal)
-Case 2 public: HTTPS -> ngrok -> gateway:80 (internal)
+8002/tcp
 ```
 
-Case 2 Gateway còn kiểm tra `X-Forwarded-Proto` và redirect original HTTP requests sang HTTPS.
+trong `docker compose ps` không tương đương:
+
+```text
+0.0.0.0:8002->8002/tcp
+```
+
+Case 2 chứng minh một service vẫn có thể public Internet qua ngrok dù không publish host port.
 
 ---
 
 # Persistence
 
-- PostgreSQL mount named volume `order-data`.
-- Redis bật AOF và mount named volume `catalog-data`.
-- `docker compose down` xóa containers/networks nhưng giữ named volumes.
-- `docker compose down -v` xóa luôn project named volumes.
-- Ngrok URL có thể thay đổi khi tunnel/container được tạo lại.
+- PostgreSQL -> named volume `order-data`.
+- Redis -> AOF + named volume `catalog-data`.
+- `docker compose down` giữ volumes.
+- `docker compose down -v` xóa volumes.
+- Ngrok URLs có thể thay đổi khi tunnel được tạo lại.
 
 # Dependency graph
 
@@ -248,30 +217,27 @@ Order + Catalog healthy -> Frontend/BFF healthy -> ngrok starts
 Case 2:
 
 ```text
-Frontend + Order + Catalog healthy -> Gateway healthy -> ngrok starts
+Frontend healthy -> ngrok-frontend
+Order healthy    -> ngrok-order
+Catalog healthy  -> ngrok-catalog
 ```
 
 # Boundary proof
 
-Cùng network:
+Order thấy Catalog:
 
-```bash
-docker compose exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
+```powershell
+docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
 ```
 
-Không cùng datastore network:
+Order không thấy Redis:
 
-```bash
-docker compose exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
-docker compose exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
+```powershell
+docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
 ```
 
-Controlled experiment:
+Catalog không thấy PostgreSQL:
 
-```bash
-docker network connect mini-shop-private_catalog-data-net $(docker compose ps -q order-service)
-docker compose exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
-docker network disconnect mini-shop-private_catalog-data-net $(docker compose ps -q order-service)
+```powershell
+docker compose -f compose.public.yaml exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
 ```
-
-Biến duy nhất thay đổi là network membership; không sửa code và không restart service.
