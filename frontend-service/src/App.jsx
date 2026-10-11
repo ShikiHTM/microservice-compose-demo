@@ -43,13 +43,13 @@ function ArchitectureCard() {
         showIcon
         message={
           isPrivate
-            ? 'Only the Frontend/BFF is published. Raw Order/Catalog API routes are not exposed to external clients.'
+            ? 'Only the Frontend Nginx reverse proxy is published. Raw Order/Catalog API routes are not exposed to external clients.'
             : 'Frontend, Order API and Catalog API each have their own ngrok HTTPS endpoint. There is no shared API gateway.'
         }
       />
       <pre className="architecture-pre">
         {isPrivate
-          ? `Internet\n   |\n   v\nFrontend + BFF (public :3000)\n   |  private service-net\n   +------> Order Service ------> Catalog Service\n              |                       |\n        order-data-net         catalog-data-net\n              |                       |\n          PostgreSQL                 Redis`
+          ? `Internet\n   |\n   v\nFrontend + Nginx reverse proxy (public :80)\n   |  private service-net\n   +------> Order Service ------> Catalog Service\n              |                       |\n        order-data-net         catalog-data-net\n              |                       |\n          PostgreSQL                 Redis`
           : `Internet\n   |\n   +----> ngrok-FE -------> Frontend\n   |\n   +----> ngrok-Order ----> Order API ------> Catalog Service\n   |                           |                   |\n   |                     order-data-net     catalog-data-net\n   |                           |                   |\n   |                       PostgreSQL             Redis\n   |\n   +----> ngrok-Catalog --> Catalog API`}
       </pre>
     </Card>
@@ -223,9 +223,9 @@ export default function App() {
           <Alert
             showIcon
             type={deploymentMode === 'private' ? 'info' : 'success'}
-            message={deploymentMode === 'private' ? 'Private mode: browser → BFF → private services' : 'Public mode: three independent HTTPS ngrok endpoints'}
+            message={deploymentMode === 'private' ? 'Private mode: browser → Nginx reverse proxy → private services' : 'Public mode: three independent HTTPS ngrok endpoints'}
             description={deploymentMode === 'private'
-              ? 'There is no generic /api proxy. The BFF exposes only /shop business operations.'
+              ? 'There is no generic /api proxy. Nginx exposes only selected /shop routes to the private services.'
               : 'Browser loads the frontend through the FE tunnel, then calls Order and Catalog directly through their own public ngrok URLs. There is no shared /api gateway path.'}
           />
           <Card title="Runtime service metadata">
