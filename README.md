@@ -4,7 +4,7 @@ Project tập trung vào **2 business microservices** và **2 mô hình public e
 
 - `order-service` — FastAPI, sở hữu order data trong PostgreSQL.
 - `catalog-service` — Express, sở hữu product/stock trong Redis.
-- `frontend-service` — React UI; Case 1 chạy kèm BFF, Case 2 chạy static Nginx.
+- `frontend-service` — React UI + Nginx.
 - `ngrok` — public HTTPS edge.
 
 `customer-service` đã được bỏ. Customer được lưu như snapshot trong order (`customer_name`, `customer_email`).
@@ -33,7 +33,7 @@ Không commit token thật lên repository.
 
 ---
 
-# CASE 1 — một public BFF, backend private
+# CASE 1 — Nginx public, native backend private
 
 File: `compose.yaml`.
 
@@ -44,7 +44,7 @@ Internet
    |
  ngrok
    |
-Frontend/BFF
+Frontend + Nginx reverse proxy
    |
 service-net
    +-----------> Order Service -----------> Catalog Service
@@ -54,20 +54,21 @@ service-net
                   PostgreSQL                    Redis
 ```
 
-Không container nào publish host port. Ngrok chỉ tunnel vào `frontend-bff`.
+Không container nào publish host port. Ngrok chỉ tunnel vào `frontend-service:80`.
 
-Public BFF contract:
+Nginx serve React và chỉ reverse proxy một số route frontend cần dùng:
 
 ```text
-GET  /shop/products
-GET  /shop/orders
-POST /shop/checkout
-GET  /shop/system
+GET  /shop/products  -> catalog-service:8002/products
+GET  /shop/orders    -> order-service:8003/orders
+POST /shop/checkout  -> order-service:8003/orders
 ```
+
+Các route metadata `/shop/system/...` cũng được proxy riêng để UI hiển thị trạng thái. Không có generic `/api/*` reverse proxy.
 
 Raw backend paths như `/api/order/orders` và `/api/catalog/products` trả `404` có chủ đích.
 
-Điểm quan trọng: external client vẫn có thể gọi public BFF contract bằng browser/curl/Postman. Điều được giữ private là **native Order/Catalog API**, không phải mọi business action.
+Điểm quan trọng: external client vẫn có thể gọi các route `/shop/*` public bằng browser/curl/Postman. Điều được giữ private là **native Order/Catalog API và backend service endpoint riêng**.
 
 ### Chạy Case 1
 
@@ -93,10 +94,10 @@ http://localhost:8002/products         ❌
 http://localhost:8003/orders           ❌
 ```
 
-BFF vẫn gọi backend private được:
+Chứng minh Nginx container gọi Catalog qua private Docker network được:
 
 ```powershell
-docker compose exec frontend-bff node -e "fetch('http://catalog-service:8002/products').then(r=>r.text()).then(console.log)"
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
 
 ---
@@ -144,7 +145,7 @@ https://<order-url>.ngrok-free.app/orders
 https://<catalog-url>.ngrok-free.app/products
 ```
 
-Frontend React chạy trong browser gọi trực tiếp hai backend public URL. `frontend-service` chỉ expose metadata từ ngrok inspector để browser discover URL runtime; nó không proxy business API.
+Frontend React chạy trong browser gọi trực tiếp hai backend public URL. `frontend-service` chỉ expose metadata từ ngrok inspector để browser discover URL runtime; nó **không reverse proxy business API** trong Case 2.
 
 Order vẫn gọi Catalog nội bộ bằng:
 
@@ -211,7 +212,7 @@ Body:
 
 ```text
 CASE 1
-Internet -> ngrok -> BFF -> private native Order/Catalog APIs
+Internet -> ngrok -> Frontend/Nginx -> selected /shop routes -> private backend
 
 CASE 2
 Internet -> FE tunnel      -> Frontend
@@ -219,9 +220,9 @@ Internet -> Order tunnel   -> Order API
 Internet -> Catalog tunnel -> Catalog API
 ```
 
-- Case 1: backend microservices **không có public endpoint riêng**.
+- Case 1: backend microservices **không có public endpoint riêng**; Nginx chỉ reverse proxy các route được chọn.
 - Case 2: mỗi backend microservice **có public endpoint riêng**.
-- Case 2 dùng **một ngrok agent session nhưng ba tunnel/public URL**, tránh giới hạn số simultaneous agent sessions.
+- Case 2 dùng **một ngrok agent session nhưng ba tunnel/public URL**.
 - Cả hai case đều không cần publish `8002/8003` ra host.
 - Database luôn private.
 
@@ -270,15 +271,15 @@ xóa cả volumes.
 # Files quan trọng
 
 ```text
-compose.yaml                     Case 1 — ngrok -> Frontend/BFF
-compose.public.yaml              Case 2 — one ngrok agent, 3 public tunnels
-ngrok/ngrok.yml                  Case 2 tunnel definitions
-frontend-service/Dockerfile.bff  Case 1 Node/Express BFF runtime
-frontend-service/Dockerfile      Case 2 React/Nginx runtime
-frontend-service/server.js       Case 1 BFF business contract
-frontend-service/nginx.conf      Case 2 UI + runtime tunnel discovery
-frontend-service/src/api.js      Browser discovers and calls public BE tunnels
-ARCHITECTURE.md                  giải thích topology
-README-DEMO.md                   command demo
-PRESENTATION-DEMO.md             flow trình bày
+compose.yaml                       Case 1 — ngrok -> Frontend/Nginx reverse proxy
+compose.public.yaml                Case 2 — one ngrok agent, 3 public tunnels
+ngrok/ngrok.yml                    Case 2 tunnel definitions
+frontend-service/Dockerfile.private Case 1 React/Nginx runtime
+frontend-service/nginx.private.conf Case 1 selected reverse-proxy routes
+frontend-service/Dockerfile         Case 2 React/Nginx runtime
+frontend-service/nginx.conf         Case 2 UI + runtime tunnel discovery
+frontend-service/src/api.js         Frontend API behavior for both cases
+ARCHITECTURE.md                     giải thích topology
+README-DEMO.md                      command demo
+PRESENTATION-DEMO.md                flow trình bày
 ```
