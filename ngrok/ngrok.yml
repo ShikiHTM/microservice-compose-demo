@@ -1,0 +1,14 @@
+version: "2"
+
+tunnels:
+  frontend:
+    proto: http
+    addr: frontend-service:80
+
+  order:
+    proto: http
+    addr: order-service:8003
+
+  catalog:
+    proto: http
+    addr: catalog-service:8002
