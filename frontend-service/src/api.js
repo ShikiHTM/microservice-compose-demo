@@ -40,9 +40,30 @@ export async function requestJson(url, options = {}) {
 const privateEndpoints = {
   products: '/shop/products',
   orders: '/shop/orders',
-  createOrder: '/shop/checkout',
-  system: '/shop/system'
+  createOrder: '/shop/checkout'
 };
+
+const privateSystemUrls = {
+  orderInfo: '/shop/system/order/info',
+  orderDependencies: '/shop/system/order/dependencies',
+  orderStats: '/shop/system/order/stats',
+  catalogInfo: '/shop/system/catalog/info',
+  catalogDependencies: '/shop/system/catalog/dependencies',
+  catalogStats: '/shop/system/catalog/stats'
+};
+
+async function collectSystem(urls, mode) {
+  const entries = await Promise.all(
+    Object.entries(urls).map(async ([key, url]) => {
+      try {
+        return [key, { ok: true, data: await requestJson(url) }];
+      } catch (error) {
+        return [key, { ok: false, error: error.message }];
+      }
+    })
+  );
+  return { mode, results: Object.fromEntries(entries) };
+}
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -96,25 +117,14 @@ async function getPublicEndpoints() {
 
 async function publicSystem() {
   const endpoints = await getPublicEndpoints();
-  const urls = {
+  return collectSystem({
     orderInfo: `${endpoints.orderBase}/info`,
     orderDependencies: `${endpoints.orderBase}/dependencies`,
     orderStats: `${endpoints.orderBase}/stats`,
     catalogInfo: `${endpoints.catalogBase}/info`,
     catalogDependencies: `${endpoints.catalogBase}/dependencies`,
     catalogStats: `${endpoints.catalogBase}/stats`
-  };
-
-  const entries = await Promise.all(
-    Object.entries(urls).map(async ([key, url]) => {
-      try {
-        return [key, { ok: true, data: await requestJson(url) }];
-      } catch (error) {
-        return [key, { ok: false, error: error.message }];
-      }
-    })
-  );
-  return { mode: 'public', results: Object.fromEntries(entries) };
+  }, 'public');
 }
 
 export const api = {
@@ -138,5 +148,7 @@ export const api = {
     });
   },
   system: () =>
-    deploymentMode === 'private' ? requestJson(privateEndpoints.system) : publicSystem()
+    deploymentMode === 'private'
+      ? collectSystem(privateSystemUrls, 'private')
+      : publicSystem()
 };
