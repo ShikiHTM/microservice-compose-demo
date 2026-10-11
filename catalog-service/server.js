@@ -4,6 +4,16 @@ import { createClient } from 'redis';
 const app = express();
 app.use(express.json());
 
+// Case 2 exposes Catalog through its own ngrok endpoint while the React app
+// runs on a different ngrok origin. Open CORS is intentional for this demo.
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 const serviceName = process.env.SERVICE_NAME || 'catalog-service';
 const port = Number(process.env.PORT || 8002);
 const redisUrl = process.env.REDIS_URL || 'redis://redis:6379';
@@ -85,7 +95,7 @@ app.get('/health', async (_req, res) => {
 app.get('/info', (_req, res) => {
   res.json({
     service: serviceName,
-    version: '3.0.0',
+    version: '4.0.0',
     runtime: 'Node.js / Express',
     container_port: port,
     persistence: 'Redis AOF + named volume',
