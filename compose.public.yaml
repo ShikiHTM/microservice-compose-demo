@@ -93,37 +93,18 @@ services:
       - service-net
     restart: unless-stopped
 
-  ngrok-frontend:
+  ngrok:
     image: ngrok/ngrok:latest
-    command: ["http", "frontend-service:80"]
+    command: ["start", "--all", "--config", "/etc/ngrok.yml"]
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
+    volumes:
+      - ./ngrok/ngrok.yml:/etc/ngrok.yml:ro
     depends_on:
       frontend-service:
         condition: service_healthy
-    networks:
-      - edge-net
-    restart: unless-stopped
-
-  ngrok-order:
-    image: ngrok/ngrok:latest
-    command: ["http", "order-service:8003"]
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
-    depends_on:
       order-service:
         condition: service_healthy
-    networks:
-      - edge-net
-      - service-net
-    restart: unless-stopped
-
-  ngrok-catalog:
-    image: ngrok/ngrok:latest
-    command: ["http", "catalog-service:8002"]
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in .env before starting public mode}
-    depends_on:
       catalog-service:
         condition: service_healthy
     networks:
