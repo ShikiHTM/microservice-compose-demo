@@ -16,7 +16,7 @@ Nói:
 
 ---
 
-# CASE 1 — một public BFF, backend private
+# CASE 1 — Nginx public, backend private
 
 Start:
 
@@ -34,26 +34,26 @@ docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http
 
 Nói:
 
-> Case 1 ngrok chỉ tunnel vào Frontend/BFF. Order và Catalog không có public endpoint riêng.
+> Case 1 ngrok chỉ tunnel vào Frontend/Nginx. Nginx serve React và reverse proxy một số route `/shop/*` tới backend private. Order và Catalog không có public URL riêng.
 
 Test:
 
 ```text
-FE/BFF /shop/products        ✅
-FE/BFF /api/order/orders     ❌ 404
-localhost:8002               ❌
-localhost:8003               ❌
+FE /shop/products             ✅
+FE /api/order/orders          ❌ 404
+localhost:8002                ❌
+localhost:8003                ❌
 ```
 
-BFF vẫn gọi backend private:
+Chứng minh frontend Nginx thấy Catalog nội bộ:
 
 ```powershell
-docker compose exec frontend-bff node -e "fetch('http://catalog-service:8002/products').then(r=>r.text()).then(console.log)"
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
 
 Câu chốt:
 
-> Client ngoài chỉ thấy BFF contract. Native Order/Catalog APIs vẫn private sau Docker network.
+> Client ngoài chỉ đi vào Nginx. Nginx mới reverse proxy các route được cho phép tới backend qua private Docker network. Native Order/Catalog endpoint không có URL Internet riêng.
 
 Xong Case 1:
 
@@ -85,12 +85,12 @@ Trong JSON tìm tunnel `frontend`, `order`, `catalog` và lấy từng `public_u
 
 Nói:
 
-> Case 2 không dùng một Gateway chung. Một ngrok agent mở ba public tunnel độc lập: Frontend, Order và Catalog mỗi service có URL Internet riêng.
+> Case 2 không dùng reverse proxy business API qua frontend. Một ngrok agent mở ba public tunnel độc lập: Frontend, Order và Catalog mỗi service có URL Internet riêng.
 
 Flow:
 
 ```text
-Browser -> FE tunnel      -> Frontend
+Browser -> FE tunnel      -> Frontend Nginx
 Postman -> Order tunnel   -> Order API
 Postman -> Catalog tunnel -> Catalog API
 ```
@@ -124,7 +124,7 @@ ngrok-skip-browser-warning: 1
 
 Nói:
 
-> Backend container vẫn không publish host port, nhưng backend API đã public qua tunnel riêng. Ba tunnel dùng chung một ngrok agent session nên không cần ba agent process.
+> Backend container vẫn không publish host port, nhưng backend API đã public qua tunnel riêng. Frontend Nginx Case 2 chỉ serve React và metadata runtime, không reverse proxy business API.
 
 Internal Order -> Catalog vẫn dùng private network:
 
@@ -140,4 +140,4 @@ docker compose -f compose.public.yaml exec order-service python -c "import socke
 
 ## Câu kết
 
-> Case 1 chỉ có BFF là public, native backend không có URL Internet riêng. Case 2 Order và Catalog có public ngrok URL độc lập. Cả hai vẫn giữ database private và không publish trực tiếp host port 8002/8003.
+> Case 1 dùng Nginx làm public reverse proxy có chọn lọc, còn Order/Catalog không có public URL riêng. Case 2 thì Order và Catalog có public ngrok URL độc lập nên client gọi trực tiếp backend API, không đi qua frontend Nginx. Database ở cả hai case vẫn private.
