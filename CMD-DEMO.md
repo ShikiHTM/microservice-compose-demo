@@ -2,7 +2,7 @@
 
 Trước khi chạy, điền `NGROK_AUTHTOKEN` vào `.env`.
 
-## Case 1 — ngrok Traffic Policy reverse proxy
+## Case 1 — ngrok tunnel + Nginx reverse proxy
 
 ```cmd
 docker compose down -v --remove-orphans
@@ -16,20 +16,18 @@ Lấy public URL:
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Trong JSON tìm endpoint/tunnel `public`.
-
-Test selected route:
+Test Nginx reverse proxy:
 
 ```cmd
-curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/shop/products
-curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/shop/orders
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/products
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/orders
 ```
 
-Raw backend path bị ngrok chặn:
+Raw backend path không được proxy:
 
 ```cmd
-curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/api/order/orders
-curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok.app/api/catalog/products
+curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/api/order/orders
+curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/api/catalog/products
 ```
 
 Host ports vẫn đóng:
@@ -39,13 +37,11 @@ curl http://localhost:8002/products
 curl http://localhost:8003/orders
 ```
 
-Frontend Nginx không còn cùng `service-net` với backend:
+Frontend Nginx gọi Catalog nội bộ:
 
 ```cmd
-docker compose exec frontend-service wget -T 3 -O - http://catalog-service:8002/products
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
 ```
-
-Kỳ vọng fail. Ngrok mới là reverse proxy nối `edge-net` với `service-net`.
 
 Xong Case 1:
 
