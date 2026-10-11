@@ -37,25 +37,13 @@ endpoints:
               config:
                 url: https://catalog.internal
 
-        - name: order-list
+        - name: order-business
           expressions:
-            - "req.url.path == '/shop/orders'"
+            - "req.url.path == '/shop/orders' || req.url.path == '/shop/checkout'"
           actions:
             - type: url-rewrite
               config:
-                from: /shop/orders
-                to: /orders
-            - type: forward-internal
-              config:
-                url: https://order.internal
-
-        - name: order-checkout
-          expressions:
-            - "req.url.path == '/shop/checkout'"
-          actions:
-            - type: url-rewrite
-              config:
-                from: /shop/checkout
+                from: /shop/(orders|checkout)
                 to: /orders
             - type: forward-internal
               config:
