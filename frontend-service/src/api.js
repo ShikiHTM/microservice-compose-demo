@@ -16,11 +16,16 @@ function normalizeError(detail, status) {
   return `HTTP ${status}`;
 }
 
+function isNgrokUrl(url) {
+  return /^https?:\/\/[^/]*ngrok/i.test(url);
+}
+
 export async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(isNgrokUrl(url) ? { 'ngrok-skip-browser-warning': '1' } : {}),
       ...(options.headers || {})
     }
   });
@@ -39,22 +44,62 @@ const privateEndpoints = {
   system: '/shop/system'
 };
 
-const publicEndpoints = {
-  products: '/api/catalog/products',
-  orders: '/api/order/orders',
-  createOrder: '/api/order/orders'
-};
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
-export const endpoints = deploymentMode === 'public' ? publicEndpoints : privateEndpoints;
+async function discoverTunnel(path, label) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const tunnel = (payload.tunnels || []).find((item) => item.proto === 'https') || payload.tunnels?.[0];
+      if (tunnel?.public_url) return tunnel.public_url.replace(/\/$/, '');
+      throw new Error('public_url not ready');
+    } catch (error) {
+      lastError = error;
+      await sleep(500);
+    }
+  }
+
+  throw new Error(`Cannot discover ${label} ngrok URL: ${lastError?.message || 'unknown error'}`);
+}
+
+let publicEndpointsPromise = null;
+
+async function getPublicEndpoints() {
+  if (!publicEndpointsPromise) {
+    publicEndpointsPromise = Promise.all([
+      discoverTunnel('/runtime/order-tunnel', 'Order'),
+      discoverTunnel('/runtime/catalog-tunnel', 'Catalog')
+    ])
+      .then(([orderBase, catalogBase]) => ({
+        orderBase,
+        catalogBase,
+        products: `${catalogBase}/products`,
+        orders: `${orderBase}/orders`,
+        createOrder: `${orderBase}/orders`
+      }))
+      .catch((error) => {
+        publicEndpointsPromise = null;
+        throw error;
+      });
+  }
+  return publicEndpointsPromise;
+}
 
 async function publicSystem() {
+  const endpoints = await getPublicEndpoints();
   const urls = {
-    orderInfo: '/api/order/info',
-    orderDependencies: '/api/order/dependencies',
-    orderStats: '/api/order/stats',
-    catalogInfo: '/api/catalog/info',
-    catalogDependencies: '/api/catalog/dependencies',
-    catalogStats: '/api/catalog/stats'
+    orderInfo: `${endpoints.orderBase}/info`,
+    orderDependencies: `${endpoints.orderBase}/dependencies`,
+    orderStats: `${endpoints.orderBase}/stats`,
+    catalogInfo: `${endpoints.catalogBase}/info`,
+    catalogDependencies: `${endpoints.catalogBase}/dependencies`,
+    catalogStats: `${endpoints.catalogBase}/stats`
   };
 
   const entries = await Promise.all(
@@ -70,13 +115,25 @@ async function publicSystem() {
 }
 
 export const api = {
-  products: () => requestJson(endpoints.products),
-  orders: () => requestJson(endpoints.orders),
-  createOrder: (payload) =>
-    requestJson(endpoints.createOrder, {
+  products: async () => {
+    if (deploymentMode === 'private') return requestJson(privateEndpoints.products);
+    const endpoints = await getPublicEndpoints();
+    return requestJson(endpoints.products);
+  },
+  orders: async () => {
+    if (deploymentMode === 'private') return requestJson(privateEndpoints.orders);
+    const endpoints = await getPublicEndpoints();
+    return requestJson(endpoints.orders);
+  },
+  createOrder: async (payload) => {
+    const url = deploymentMode === 'private'
+      ? privateEndpoints.createOrder
+      : (await getPublicEndpoints()).createOrder;
+    return requestJson(url, {
       method: 'POST',
       body: JSON.stringify(payload)
-    }),
+    });
+  },
   system: () =>
     deploymentMode === 'private' ? requestJson(privateEndpoints.system) : publicSystem()
 };
