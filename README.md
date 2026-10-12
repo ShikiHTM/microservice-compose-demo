@@ -1,165 +1,180 @@
-# Mini Shop — Docker Compose Microservices Demo
+# Microservice Compose Demo
 
-Project có **2 business microservices**:
+Repo co 2 case demo.
 
-- `order-service` — FastAPI, sở hữu order data trong PostgreSQL.
-- `catalog-service` — Express, sở hữu product/stock trong Redis.
-- `frontend-service` — React UI được Nginx serve.
-- `ngrok` — public HTTPS edge.
+Case 1: ngrok -> Nginx -> backend private
 
-## Business flow chung
+Case 2: 1 ngrok agent tao 3 public URL cho Frontend, Order, Catalog
 
-```text
-Order Service --------------------> Catalog Service
-   |                                  |
-PostgreSQL                           Redis
-```
+## Chuan bi
 
-Order gọi Catalog qua `service-net`. Order không truy cập Redis trực tiếp; Catalog không truy cập PostgreSQL trực tiếp.
-
-Đặt token trong `.env`:
+Dien ngrok token vao file `.env`:
 
 ```env
-NGROK_AUTHTOKEN=your_real_token
+NGROK_AUTHTOKEN=your_token
 ```
 
----
+Cap nhat code:
 
-# CASE 1 — ngrok tunnel + Nginx reverse proxy, backend private
-
-File: `compose.yaml`.
-
-```text
-Internet
-   |
- HTTPS
-   |
- ngrok
-   |
-Frontend + Nginx reverse proxy
-   |
-service-net
-   +-----------> Order Service -----------> Catalog Service
-                      |                           |
-                  PostgreSQL                    Redis
+```cmd
+git pull
 ```
 
-Ngrok chỉ tạo HTTPS tunnel vào `frontend-service:80`. **Nginx mới là reverse proxy** cho các route được chọn:
+## Case 1
 
-```text
-GET  /shop/products  -> catalog-service:8002/products
-GET  /shop/orders    -> order-service:8003/orders
-POST /shop/checkout  -> order-service:8003/orders
-```
+Chay:
 
-Các route `/shop/system/...` cũng được proxy để UI hiển thị metadata. `/api/*` trả `404`, nên native Order/Catalog API không được expose qua public frontend URL.
-
-`frontend-service` nằm trên `edge-net` + `service-net`; `ngrok` chỉ cần `edge-net`. Order/Catalog không publish host port.
-
-> Ghi chú: ngrok có Traffic Policy/Gateway có thể làm routing nâng cao, nhưng policy cần cho demo này bị giới hạn bởi plan hiện tại. Vì vậy project dùng ngrok làm HTTPS tunnel và Nginx làm reverse proxy để demo chạy ổn định trên plan hiện có.
-
-### Chạy Case 1
-
-```powershell
+```cmd
 docker compose down -v --remove-orphans
 docker compose up -d --build
 docker compose ps
 ```
 
-Lấy URL:
+Lay URL ngrok:
 
-```powershell
+```cmd
 docker run --rm --network mini-shop-private_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
-Test:
+Lay `public_url` trong JSON. Vi du:
 
 ```text
-BASE/                     ✅ React UI
-BASE/shop/products        ✅ qua Nginx -> Catalog
-BASE/shop/orders          ✅ qua Nginx -> Order
-BASE/api/order/orders     ❌ 404
-localhost:8002            ❌
-localhost:8003            ❌
+https://xxxx.ngrok-free.app
 ```
 
----
+Test Frontend va Nginx reverse proxy:
 
-# CASE 2 — ba public URL độc lập từ một ngrok agent
+```cmd
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/products
+curl -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/shop/orders
+curl -i -H "ngrok-skip-browser-warning: 1" https://xxxx.ngrok-free.app/api/order/orders
+```
 
-File: `compose.public.yaml`.
+Ket qua mong doi:
 
 ```text
-Internet -> FE public URL      -> frontend-service:80
-Internet -> Order public URL   -> order-service:8003
-Internet -> Catalog public URL -> catalog-service:8002
+/shop/products       200
+/shop/orders         200
+/api/order/orders    404
 ```
 
-Một container `ngrok` chạy 3 tunnel trong cùng một agent session, khai báo tại `ngrok/ngrok.yml`:
+Test backend khong publish ra host:
+
+```cmd
+curl http://localhost:8002/products
+curl http://localhost:8003/orders
+```
+
+Hai lenh tren phai fail.
+
+Test Nginx goi Catalog trong Docker network:
+
+```cmd
+docker compose exec frontend-service wget -qO- http://catalog-service:8002/products
+```
+
+Test network:
+
+```cmd
+docker compose exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
+docker compose exec order-service python -c "import socket; print(socket.gethostbyname('redis'))"
+docker compose exec catalog-service node -e "require('dns').lookup('postgres',(e,a)=>console.log(e||a))"
+```
+
+Ket qua mong doi:
 
 ```text
-frontend -> frontend-service:80
-order    -> order-service:8003
-catalog  -> catalog-service:8002
+Order thay Catalog
+Order khong thay Redis
+Catalog khong thay PostgreSQL
 ```
 
-Frontend Nginx Case 2 chỉ serve React và `/runtime/tunnels` để browser discover backend URLs. Business API **không reverse proxy qua frontend Nginx**.
+Xem log ngrok neu co loi:
 
-Order vẫn gọi Catalog nội bộ bằng:
-
-```text
-http://catalog-service:8002
+```cmd
+docker compose logs ngrok
 ```
 
-### Chạy Case 2
+Dung Case 1:
 
-```powershell
+```cmd
+docker compose down
+```
+
+## Case 2
+
+Chay:
+
+```cmd
 docker compose -f compose.public.yaml down -v --remove-orphans
 docker compose -f compose.public.yaml up -d --build
 docker compose -f compose.public.yaml ps
 ```
 
-Lấy cả 3 URL:
+Lay 3 URL ngrok:
 
-```powershell
+```cmd
 docker run --rm --network mini-shop-public_edge-net curlimages/curl:latest http://ngrok:4040/api/tunnels
 ```
 
+Trong JSON tim 3 tunnel:
+
 ```text
-FE_URL/              ✅
-ORDER_URL/orders     ✅ native Order API public
-CATALOG_URL/products ✅ native Catalog API public
-localhost:8002       ❌
-localhost:8003       ❌
+frontend
+order
+catalog
 ```
 
----
+Test:
 
-# Khác nhau cốt lõi
-
-```text
-CASE 1
-Internet -> ngrok -> Nginx reverse proxy -> selected routes -> private backend
-
-CASE 2
-Internet -> FE_URL      -> Frontend
-Internet -> ORDER_URL   -> Order API
-Internet -> CATALOG_URL -> Catalog API
+```cmd
+curl -H "ngrok-skip-browser-warning: 1" https://ORDER_URL/orders
+curl -H "ngrok-skip-browser-warning: 1" https://CATALOG_URL/products
 ```
 
-- Case 1: Order/Catalog **không có public URL riêng**.
-- Case 2: Order/Catalog **có public URL riêng**.
-- Cả hai case đều không publish host port `8002/8003`.
-- Database luôn private.
+Mo `FE_URL` tren browser de test frontend.
 
-## Files quan trọng
+Test tao order:
 
-```text
-compose.yaml                        Case 1
-frontend-service/Dockerfile.private Case 1 React/Nginx
-frontend-service/nginx.private.conf Case 1 Nginx reverse proxy
-compose.public.yaml                 Case 2
-ngrok/ngrok.yml                     Case 2 3 public tunnels
-frontend-service/nginx.conf         Case 2 static UI + runtime tunnel discovery
-frontend-service/src/api.js         API behavior cho cả hai case
+```cmd
+curl -X POST "https://ORDER_URL/orders" -H "Content-Type: application/json" -H "ngrok-skip-browser-warning: 1" -d "{\"customer_name\":\"Nguyen Van An\",\"customer_email\":\"an@example.com\",\"product_id\":1,\"quantity\":1}"
+```
+
+Test backend khong publish ra host:
+
+```cmd
+curl http://localhost:8002/products
+curl http://localhost:8003/orders
+```
+
+Hai lenh tren phai fail.
+
+Test Order goi Catalog noi bo:
+
+```cmd
+docker compose -f compose.public.yaml exec order-service python -c "import socket; print(socket.gethostbyname('catalog-service'))"
+```
+
+Test database:
+
+```cmd
+docker compose -f compose.public.yaml exec postgres psql -U shopuser -d shopdb -c "SELECT customer_name, product_name, quantity, total FROM orders ORDER BY created_at DESC;"
+```
+
+Test Redis:
+
+```cmd
+docker compose -f compose.public.yaml exec redis redis-cli HGETALL product:1
+```
+
+Xem log ngrok neu co loi:
+
+```cmd
+docker compose -f compose.public.yaml logs ngrok
+```
+
+Dung Case 2:
+
+```cmd
+docker compose -f compose.public.yaml down
 ```
