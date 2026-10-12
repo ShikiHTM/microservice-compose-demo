@@ -58,6 +58,25 @@ Ket qua mong doi:
 /api/order/orders    404
 ```
 
+Postman tao order Case 1:
+
+```text
+Method: POST
+URL: https://xxxx.ngrok-free.app/shop/checkout
+Header: Content-Type: application/json
+Header: ngrok-skip-browser-warning: 1
+Body: raw JSON
+```
+
+```json
+{
+  "customer_name": "Nguyen Van An",
+  "customer_email": "an@example.com",
+  "product_id": 1,
+  "quantity": 1
+}
+```
+
 Test backend khong publish ra host:
 
 ```cmd
@@ -134,7 +153,26 @@ curl -H "ngrok-skip-browser-warning: 1" https://CATALOG_URL/products
 
 Mo `FE_URL` tren browser de test frontend.
 
-Test tao order:
+Postman tao order Case 2:
+
+```text
+Method: POST
+URL: https://ORDER_URL/orders
+Header: Content-Type: application/json
+Header: ngrok-skip-browser-warning: 1
+Body: raw JSON
+```
+
+```json
+{
+  "customer_name": "Nguyen Van An",
+  "customer_email": "an@example.com",
+  "product_id": 1,
+  "quantity": 1
+}
+```
+
+Curl tao order:
 
 ```cmd
 curl -X POST "https://ORDER_URL/orders" -H "Content-Type: application/json" -H "ngrok-skip-browser-warning: 1" -d "{\"customer_name\":\"Nguyen Van An\",\"customer_email\":\"an@example.com\",\"product_id\":1,\"quantity\":1}"
