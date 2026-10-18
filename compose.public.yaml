@@ -33,6 +33,7 @@ services:
     restart: unless-stopped
 
   catalog-service:
+    image: ${DOCKERHUB_USERNAME:-local}/microservice-catalog:latest
     build:
       context: ./catalog-service
     environment:
@@ -54,6 +55,7 @@ services:
     restart: unless-stopped
 
   order-service:
+    image: ${DOCKERHUB_USERNAME:-local}/microservice-order:latest
     build:
       context: ./order-service
     environment:
@@ -77,6 +79,7 @@ services:
     restart: unless-stopped
 
   frontend-service:
+    image: ${DOCKERHUB_USERNAME:-local}/microservice-frontend-public:latest
     build:
       context: ./frontend-service
       dockerfile: Dockerfile
