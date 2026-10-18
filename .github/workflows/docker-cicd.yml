@@ -1,0 +1,209 @@
+name: Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-cicd-main
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      order: ${{ steps.filter.outputs.order }}
+      catalog: ${{ steps.filter.outputs.catalog }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      config: ${{ steps.filter.outputs.config }}
+      any_image: ${{ steps.filter.outputs.any_image }}
+      any_deploy: ${{ steps.filter.outputs.any_deploy }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "order=true" >> "$GITHUB_OUTPUT"
+            echo "catalog=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "config=true" >> "$GITHUB_OUTPUT"
+            echo "any_image=true" >> "$GITHUB_OUTPUT"
+            echo "any_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            echo "order=true" >> "$GITHUB_OUTPUT"
+            echo "catalog=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "config=true" >> "$GITHUB_OUTPUT"
+            echo "any_image=true" >> "$GITHUB_OUTPUT"
+            echo "any_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED="$(git diff --name-only "$BEFORE" "$AFTER")"
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          order=false
+          catalog=false
+          frontend=false
+          config=false
+
+          if echo "$CHANGED" | grep -q '^order-service/'; then order=true; fi
+          if echo "$CHANGED" | grep -q '^catalog-service/'; then catalog=true; fi
+          if echo "$CHANGED" | grep -q '^frontend-service/'; then frontend=true; fi
+          if echo "$CHANGED" | grep -Eq '^(compose\.public\.yaml|ngrok/ngrok\.yml)$'; then config=true; fi
+
+          any_image=false
+          if [[ "$order" == "true" || "$catalog" == "true" || "$frontend" == "true" ]]; then
+            any_image=true
+          fi
+
+          any_deploy=false
+          if [[ "$any_image" == "true" || "$config" == "true" ]]; then
+            any_deploy=true
+          fi
+
+          echo "order=$order" >> "$GITHUB_OUTPUT"
+          echo "catalog=$catalog" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "config=$config" >> "$GITHUB_OUTPUT"
+          echo "any_image=$any_image" >> "$GITHUB_OUTPUT"
+          echo "any_deploy=$any_deploy" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and push Docker images
+    needs: changes
+    if: needs.changes.outputs.any_image == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Order image
+        if: needs.changes.outputs.order == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./order-service
+          file: ./order-service/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-order:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-order:${{ github.sha }}
+
+      - name: Build and push Catalog image
+        if: needs.changes.outputs.catalog == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./catalog-service
+          file: ./catalog-service/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-catalog:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-catalog:${{ github.sha }}
+
+      - name: Build and push public Frontend image
+        if: needs.changes.outputs.frontend == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend-service
+          file: ./frontend-service/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-frontend-public:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-frontend-public:${{ github.sha }}
+
+      - name: Build and push private Frontend image
+        if: needs.changes.outputs.frontend == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend-service
+          file: ./frontend-service/Dockerfile.private
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-frontend-private:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/microservice-frontend-private:${{ github.sha }}
+
+  deploy:
+    name: Deploy Case 2 on self-hosted runner
+    needs:
+      - changes
+      - build
+    if: >
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      vars.ENABLE_SELF_HOSTED_DEPLOY == 'true' &&
+      needs.changes.outputs.any_deploy == 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: self-hosted
+
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+
+    steps:
+      - name: Checkout latest deployment files
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Deploy Catalog only
+        if: needs.changes.outputs.catalog == 'true' && needs.changes.outputs.config != 'true'
+        run: |
+          docker compose -f compose.public.yaml pull catalog-service
+          docker compose -f compose.public.yaml up -d --no-build catalog-service
+
+      - name: Deploy Order only
+        if: needs.changes.outputs.order == 'true' && needs.changes.outputs.config != 'true'
+        run: |
+          docker compose -f compose.public.yaml pull order-service
+          docker compose -f compose.public.yaml up -d --no-build order-service
+
+      - name: Deploy public Frontend only
+        if: needs.changes.outputs.frontend == 'true' && needs.changes.outputs.config != 'true'
+        run: |
+          docker compose -f compose.public.yaml pull frontend-service
+          docker compose -f compose.public.yaml up -d --no-build frontend-service
+
+      - name: Deploy full public stack when deployment config changed
+        if: needs.changes.outputs.config == 'true'
+        run: |
+          docker compose -f compose.public.yaml pull
+          docker compose -f compose.public.yaml up -d --no-build
+
+      - name: Show running services
+        run: docker compose -f compose.public.yaml ps
