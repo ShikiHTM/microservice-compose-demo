@@ -287,7 +287,7 @@ async def create_order(payload: OrderCreate):
         # Demo limitation: stock reservation and PostgreSQL insert are not one distributed transaction.
         raise HTTPException(
             status_code=503,
-            detail=f"Order persistence failed after stock reservation: {exc}",
+            detail=f"Order persistence failed after product reservation: {exc}",
         ) from exc
 
     return row_to_order(row)
